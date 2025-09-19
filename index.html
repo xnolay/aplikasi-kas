@@ -225,7 +225,7 @@
             const sorted = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
             let runningBalance = initialBalance;
 
-            let tableHTML = `<table class="print-table">
+            let tableHTML = `<div class="print-header"><h1>Laporan Uang Kas Kantor</h1><p>PT. Glori Mitra Sukses (GMS)</p></div><table class="print-table">
                 <thead>
                     <tr>
                         <th>Tanggal</th>
@@ -277,10 +277,8 @@
             let runningBalance = initialBalance;
             let rows = [];
             
-            // Add initial balance row for CSV
             rows.push([ 'Saldo Awal', '', '', '', '', initialBalance ]);
 
-            // Process transactions
             sortedTransactions.forEach(t => {
                 const debit = t.type === 'income' ? t.amount : '';
                 const kredit = t.type === 'expense' ? t.amount : '';
@@ -295,7 +293,6 @@
                 ]);
             });
 
-            // Prepare CSV content string
             let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n`;
             csvContent += headers.join(',') + '\n';
             csvContent += rows.map(e => e.join(',')).join('\n');
@@ -453,9 +450,8 @@
             <section id="transaction-list-section" class="card p-6">
                 <div class="flex flex-wrap justify-between items-center gap-4 mb-4 no-print"><h2 class="text-xl font-bold">Daftar Transaksi</h2><div class="flex flex-wrap items-center gap-4"><input type="text" id="search-input" class="form-input max-w-xs" placeholder="Cari keterangan..."><button id="print-btn" class="btn btn-secondary">Cetak</button><button id="export-csv-btn" class="btn btn-secondary">Export CSV</button></div></div>
                 <div id="print-section">
-                    <div class="print-header"><h1>Laporan Uang Kas Kantor</h1><p>PT. Glori Mitra Sukses (GMS)</p></div>
                     <div id="display-table-container" class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-500"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" class="py-3 px-6">Tanggal</th><th scope="col" class="py-3 px-6">Keterangan</th><th scope="col" class="py-3 px-6">Kategori</th><th scope="col" class="py-3 px-6 text-right">Jumlah</th><th scope="col" class="py-3 px-6 no-print text-center">Aksi</th></tr></thead><tbody id="transaction-table-body"></tbody></table></div>
-                    <div id="print-report-container"></div>
+                    <div id="print-report-container" class="hidden"></div>
                 </div>
             </section>
         </main>
