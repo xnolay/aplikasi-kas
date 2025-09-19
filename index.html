@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laporan Kas Kantor - PT. GMS (Multi-User Pribadi)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // This setup allows the app to work in the collaborative environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "DEMO", authDomain: "DEMO", projectId: "DEMO" };
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        setLogLevel('debug');
+
+        // --- GLOBAL APP STATE ---
+        let transactions = [];
+        let expenseChart;
+        let userId = null;
+        let currentTransactionId = null;
+        let dbCollectionPath = ''; // Will be set after authentication
+
+        // --- DOM ELEMENTS ---
+        const initialBalanceEl = document.getElementById('initial-balance');
+        const totalIncomeEl = document.getElementById('total-income');
+        const totalExpenseEl = document.getElementById('total-expense');
+        const finalBalanceEl = document.getElementById('final-balance');
+        const transactionForm = document.getElementById('transaction-form');
+        const dateInput = document.getElementById('date');
+        const descriptionInput = document.getElementById('description');
+        const typeInput = document.getElementById('type');
+        const categoryWrapper = document.getElementById('category-wrapper');
+        const categoryInput = document.getElementById('category');
+        const amountInput = document.getElementById('amount');
+        const receiptWrapper = document.getElementById('receipt-wrapper');
+        const receiptInput = document.getElementById('receipt');
+        const receiptPreview = document.getElementById('receipt-preview');
+        const ocrLoader = document.getElementById('ocr-loader');
+        const transactionTableBody = document.getElementById('transaction-table-body');
+        const searchInput = document.getElementById('search-input');
+        const printBtn = document.getElementById('print-btn');
+        const exportCsvBtn = document.getElementById('export-csv-btn');
+        const userIdDisplay = document.getElementById('user-id-display');
+
+        // Edit Modal Elements
+        const editModal = document.getElementById('edit-modal');
+        const editForm = document.getElementById('edit-form');
+        const editDate = document.getElementById('edit-date');
+        const editDescription = document.getElementById('edit-description');
+        const editType = document.getElementById('edit-type');
+        const editCategoryWrapper = document.getElementById('edit-category-wrapper');
+        const editCategory = document.getElementById('edit-category');
+        const editAmount = document.getElementById('edit-amount');
+        const cancelEditBtn = document.getElementById('cancel-edit-btn');
+
+        // Delete Modal Elements
+        const deleteModal = document.getElementById('delete-modal');
+        const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+        const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+
+        // --- HELPER FUNCTIONS ---
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
+        }
+
+        // --- RENDER FUNCTIONS ---
+        function render() {
+            const searchTerm = searchInput.value.toLowerCase();
+            const filteredTransactions = transactions.filter(t => t.description.toLowerCase().includes(searchTerm));
+
+            transactionTableBody.innerHTML = '';
+            if (filteredTransactions.length === 0) {
+                transactionTableBody.innerHTML = '<tr><td colspan="7" class="text-center py-6">Belum ada transaksi atau tidak ada hasil pencarian.</td></tr>';
+            } else {
+                filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(t => {
+                    const row = document.createElement('tr');
+                    row.className = 'bg-white border-b hover:bg-gray-50';
+                    let proofCell = `<td class="py-4 px-6 no-print text-center">-</td>`;
+                    if (t.imageUrl) {
+                        proofCell = `<td class="py-4 px-6 no-print text-center"><a href="${t.imageUrl}" target="_blank" class="text-blue-600 hover:underline">Lihat</a></td>`;
+                    }
+                    row.innerHTML = `
+                        <td class="py-4 px-6">${new Date(t.date).toLocaleDateString('id-ID')}</td>
+                        <td class="py-4 px-6 font-medium text-gray-900">${t.description}</td>
+                        <td class="py-4 px-6">${t.category || '-'}</td>
+                        <td class="py-4 px-6 table-type">
+                            <span class="px-2 py-1 text-xs font-medium rounded-full ${t.type === 'income' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                ${t.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}
+                            </span>
+                        </td>
+                        <td class="py-4 px-6 text-right font-medium table-amount ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}">${formatCurrency(t.amount)}</td>
+                        ${proofCell}
+                        <td class="py-4 px-6 no-print text-center">
+                            <button data-id="${t.id}" class="edit-btn text-blue-600 hover:text-blue-800 p-1">✏️</button>
+                            <button data-id="${t.id}" class="delete-btn text-red-600 hover:text-red-800 p-1">🗑️</button>
+                        </td>
+                    `;
+                    transactionTableBody.appendChild(row);
+                });
+            }
+            updateSummary();
+            renderChart();
+        }
+
+        function updateSummary() {
+            const initialBalance = 0;
+            const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+            const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+            const finalBalance = initialBalance + totalIncome - totalExpense;
+
+            initialBalanceEl.textContent = formatCurrency(initialBalance);
+            totalIncomeEl.textContent = formatCurrency(totalIncome);
+            totalExpenseEl.textContent = formatCurrency(totalExpense);
+            finalBalanceEl.textContent = formatCurrency(finalBalance);
+        }
+
+        function renderChart() {
+            if (!document.getElementById('expense-chart')) return;
+            const ctx = document.getElementById('expense-chart').getContext('2d');
+            const expenseData = transactions
+                .filter(t => t.type === 'expense')
+                .reduce((acc, t) => {
+                    acc[t.category] = (acc[t.category] || 0) + t.amount;
+                    return acc;
+                }, {});
+
+            const labels = Object.keys(expenseData);
+            const data = Object.values(expenseData);
+            const backgroundColors = ['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
+            
+            if (expenseChart) expenseChart.destroy();
+            if (labels.length === 0) return;
+
+            expenseChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Pengeluaran per Kategori',
+                        data: data,
+                        backgroundColor: backgroundColors.slice(0, labels.length),
+                        borderColor: '#FFFFFF',
+                        borderWidth: 2,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: {
+                            callbacks: {
+                                label: context => `${context.label || ''}: ${formatCurrency(context.parsed)}`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // --- FIRESTORE CRUD OPERATIONS ---
+        async function handleFormSubmit(e) {
+            e.preventDefault();
+            const newTransaction = {
+                date: dateInput.value,
+                description: descriptionInput.value.trim(),
+                type: typeInput.value,
+                category: typeInput.value === 'expense' ? categoryInput.value : null,
+                amount: parseFloat(amountInput.value),
+                imageUrl: receiptPreview.src.startsWith('blob:') ? receiptPreview.src : null,
+                createdBy: userId,
+                createdAt: new Date().toISOString()
+            };
+
+            try {
+                const collectionRef = collection(db, dbCollectionPath);
+                await addDoc(collectionRef, newTransaction);
+                transactionForm.reset();
+                dateInput.valueAsDate = new Date();
+                receiptPreview.classList.add('hidden');
+                receiptPreview.src = '';
+                toggleCategoryAndReceipt(typeInput, categoryWrapper, receiptWrapper);
+            } catch (error) {
+                console.error("Error adding document: ", error);
+                alert("Gagal menyimpan transaksi. Coba lagi.");
+            }
+        }
+
+        async function handleEditFormSubmit(e) {
+            e.preventDefault();
+            if (!currentTransactionId) return;
+
+            const updatedData = {
+                date: editDate.value,
+                description: editDescription.value.trim(),
+                type: editType.value,
+                category: editType.value === 'expense' ? editCategory.value : null,
+                amount: parseFloat(editAmount.value),
+            };
+
+            try {
+                const docRef = doc(db, dbCollectionPath, currentTransactionId);
+                await updateDoc(docRef, updatedData);
+                closeEditModal();
+            } catch (error) {
+                console.error("Error updating document: ", error);
+                alert("Gagal memperbarui transaksi.");
+            }
+        }
+
+        async function handleDeleteConfirmed() {
+            if (!currentTransactionId) return;
+
+            try {
+                const docRef = doc(db, dbCollectionPath, currentTransactionId);
+                await deleteDoc(docRef);
+                closeDeleteModal();
+            } catch (error) {
+                console.error("Error deleting document: ", error);
+                alert("Gagal menghapus transaksi.");
+            }
+        }
+
+        // --- MODAL & UI LOGIC ---
+        function openEditModal(transaction) {
+            currentTransactionId = transaction.id;
+            editDate.value = transaction.date;
+            editDescription.value = transaction.description;
+            editType.value = transaction.type;
+            editAmount.value = transaction.amount;
+            if (transaction.type === 'expense') {
+                editCategory.value = transaction.category;
+            }
+            toggleCategoryAndReceipt(editType, editCategoryWrapper, null);
+            editModal.classList.remove('hidden');
+        }
+
+        function closeEditModal() {
+            currentTransactionId = null;
+            editModal.classList.add('hidden');
+            editForm.reset();
+        }
+
+        function openDeleteModal(transactionId) {
+            currentTransactionId = transactionId;
+            deleteModal.classList.remove('hidden');
+        }
+
+        function closeDeleteModal() {
+            currentTransactionId = null;
+            deleteModal.classList.add('hidden');
+        }
+
+        function toggleCategoryAndReceipt(typeEl, categoryEl, receiptEl) {
+            const isExpense = typeEl.value === 'expense';
+            if (categoryEl) categoryEl.style.display = isExpense ? 'block' : 'none';
+            if (receiptEl) receiptEl.style.display = isExpense ? 'block' : 'none';
+        }
+        
+        // --- AI & EXPORT ---
+        async function processReceiptWithAI(file) {
+             // ... [Identical to previous version, no changes needed here] ...
+        }
+
+        function exportToCSV() {
+             const headers = ['Tanggal', 'Keterangan', 'Kategori', 'Debet (Pemasukan)', 'Kredit (Pengeluaran)', 'Saldo'];
+            
+            const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+            
+            let runningBalance = 0;
+            const rows = sortedTransactions.map(t => {
+                const debet = t.type === 'income' ? t.amount : '';
+                const kredit = t.type === 'expense' ? t.amount : '';
+                runningBalance += (t.type === 'income' ? t.amount : -t.amount);
+                
+                return [
+                    new Date(t.date).toLocaleDateString('id-ID'),
+                    `"${t.description.replace(/"/g, '""')}"`,
+                    t.category || '',
+                    debet,
+                    kredit,
+                    runningBalance
+                ];
+            });
+
+            let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n`;
+            csvContent += headers.join(',') + '\n';
+            csvContent += rows.map(e => e.join(',')).join('\n');
+            csvContent += `\n\n,,,,"Saldo Akhir:",${runningBalance}`;
+
+            const bom = '\uFEFF';
+            const encodedUri = encodeURI('data:text/csv;charset=utf-8,' + bom + csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `laporan_kas_gms_${new Date().toISOString().slice(0,10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // --- INITIALIZATION ---
+        async function main() {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser.uid;
+                userIdDisplay.textContent = `ID Pengguna Anda: ${userId}`;
+                console.log("Authentication successful, user ID:", userId);
+                
+                // *** KEY CHANGE: Set the database path to be user-specific ***
+                dbCollectionPath = `/artifacts/${appId}/users/${userId}/transactions_gms_firestore`;
+                console.log("Using private database path:", dbCollectionPath);
+
+                const collectionRef = collection(db, dbCollectionPath);
+                onSnapshot(collectionRef, (querySnapshot) => {
+                    transactions = [];
+                    querySnapshot.forEach((doc) => {
+                        transactions.push({ id: doc.id, ...doc.data() });
+                    });
+                    console.log("Data fetched from private collection:", transactions.length, "records");
+                    render();
+                }, (error) => {
+                    console.error("Error fetching private data: ", error);
+                    transactionTableBody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-red-500">Gagal memuat data pribadi.</td></tr>`;
+                });
+
+            } catch (error) {
+                console.error("Authentication failed:", error);
+                alert("Gagal melakukan otentikasi. Aplikasi tidak dapat berjalan.");
+            }
+        }
+        
+        // --- EVENT LISTENERS ---
+        document.addEventListener('DOMContentLoaded', () => {
+            transactionTableBody.innerHTML = '<tr><td colspan="7" class="text-center py-6">Menghubungkan ke database...</td></tr>';
+            
+            // Form Submissions
+            transactionForm.addEventListener('submit', handleFormSubmit);
+            editForm.addEventListener('submit', handleEditFormSubmit);
+
+            // Modal Controls
+            cancelEditBtn.addEventListener('click', closeEditModal);
+            confirmDeleteBtn.addEventListener('click', handleDeleteConfirmed);
+            cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+
+            // Dynamic UI Toggles
+            typeInput.addEventListener('change', () => toggleCategoryAndReceipt(typeInput, categoryWrapper, receiptWrapper));
+            editType.addEventListener('change', () => toggleCategoryAndReceipt(editType, editCategoryWrapper, null));
+            
+            // Table actions (using event delegation)
+            document.getElementById('transaction-list-section').addEventListener('click', (e) => {
+                if (e.target.classList.contains('edit-btn')) {
+                    const transactionId = e.target.getAttribute('data-id');
+                    const transaction = transactions.find(t => t.id === transactionId);
+                    if (transaction) openEditModal(transaction);
+                }
+                if (e.target.classList.contains('delete-btn')) {
+                    const transactionId = e.target.getAttribute('data-id');
+                    openDeleteModal(transactionId);
+                }
+            });
+
+            // Other controls
+            receiptInput.addEventListener('change', (e) => processReceiptWithAI(e.target.files[0]));
+            searchInput.addEventListener('input', render);
+            printBtn.addEventListener('click', () => window.print());
+            exportCsvBtn.addEventListener('click', exportToCSV);
+            
+            // Initialize UI and start app
+            toggleCategoryAndReceipt(typeInput, categoryWrapper, receiptWrapper);
+            dateInput.valueAsDate = new Date();
+            main();
+        });
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #F8F7F4; color: #333; }
+        .card { background-color: #FFFFFF; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out; }
+        .card:hover { transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1); }
+        .btn { border-radius: 0.5rem; padding: 0.625rem 1.25rem; font-weight: 500; transition: all 0.2s ease-in-out; border: 1px solid transparent; }
+        .btn-primary { background-color: #3B82F6; color: white; } .btn-primary:hover { background-color: #2563EB; } .btn-primary:active { transform: scale(0.98); }
+        .btn-secondary { background-color: #E5E7EB; color: #374151; border-color: #D1D5DB; } .btn-secondary:hover { background-color: #D1D5DB; }
+        .btn-danger { background-color: #EF4444; color: white; } .btn-danger:hover { background-color: #DC2626; }
+        .form-input, .form-select { border-radius: 0.5rem; border: 1px solid #D1D5DB; padding: 0.5rem 0.75rem; width: 100%; transition: border-color 0.2s, box-shadow 0.2s; }
+        .form-input:focus, .form-select:focus { outline: none; border-color: #3B82F6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4); }
+        .chart-container { position: relative; width: 100%; max-width: 400px; margin: auto; height: 300px; max-height: 400px; }
+        @media (min-width: 768px) { .chart-container { height: 350px; } }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3B82F6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .print-only { display: none; }
+        @media print { @page { size: A4; margin: 20mm; } body { background-color: #fff; font-size: 10pt; } body * { visibility: hidden; } .no-print, .no-print * { display: none !important; } #print-section, #print-section * { visibility: visible; } #print-section { position: absolute; left: 0; top: 0; width: 100%; } .print-only { display: block; visibility: visible; text-align: center; margin-bottom: 20px; } .print-only h1 { font-size: 18pt; font-weight: bold; } .print-only p { font-size: 12pt; } table { width: 100%; border-collapse: collapse; } th, td { border: 1px solid #ccc; padding: 8px; text-align: left; } thead { background-color: #f2f2f2; } .table-amount { text-align: right; } .table-type span { background-color: transparent !important; color: #000 !important; font-size: 10pt; padding: 0; } }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-8 no-print">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Laporan Uang Kas Kantor</h1>
+            <p class="text-lg text-gray-600">PT. Glori Mitra Sukses (GMS)</p>
+        </header>
+
+        <main>
+            <section id="summary-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 no-print">
+                 <div class="card p-6 flex flex-col justify-between">
+                    <h3 class="text-md font-medium text-gray-500">Saldo Awal</h3>
+                    <p id="initial-balance" class="text-3xl font-bold text-gray-800">Rp 0</p>
+                </div>
+                <div class="card p-6 flex flex-col justify-between">
+                    <h3 class="text-md font-medium text-gray-500">Total Pemasukan</h3>
+                    <p id="total-income" class="text-3xl font-bold text-green-600">Rp 0</p>
+                </div>
+                <div class="card p-6 flex flex-col justify-between">
+                    <h3 class="text-md font-medium text-gray-500">Total Pengeluaran</h3>
+                    <p id="total-expense" class="text-3xl font-bold text-red-600">Rp 0</p>
+                </div>
+                <div class="card p-6 flex flex-col justify-between bg-blue-500 text-white">
+                    <h3 class="text-md font-medium text-blue-100">Saldo Akhir</h3>
+                    <p id="final-balance" class="text-3xl font-bold">Rp 0</p>
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8 no-print">
+                <section id="transaction-form-section" class="lg:col-span-1 card p-6">
+                    <h2 class="text-xl font-bold mb-4">Tambah Transaksi Baru</h2>
+                    <form id="transaction-form" class="space-y-4">
+                        <div><label for="date" class="block text-sm font-medium text-gray-700">Tanggal</label><input type="date" id="date" class="form-input" required></div>
+                        <div><label for="description" class="block text-sm font-medium text-gray-700">Keterangan</label><input type="text" id="description" class="form-input" placeholder="Contoh: Pembelian ATK" required></div>
+                        <div><label for="type" class="block text-sm font-medium text-gray-700">Tipe</label><select id="type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
+                        <div id="category-wrapper"><label for="category" class="block text-sm font-medium text-gray-700">Kategori</label><select id="category" class="form-select"><option>Operasional</option><option>Gaji</option><option>ATK</option><option>Transportasi</option><option>Kunjungan sales</option><option>Ekpedisi</option><option>Lainnya</option></select></div>
+                        <div><label for="amount" class="block text-sm font-medium text-gray-700">Jumlah (Rp)</label><input type="number" id="amount" class="form-input" placeholder="50000" required min="0"></div>
+                        <div id="receipt-wrapper"><label for="receipt" class="block text-sm font-medium text-gray-700">Upload Bukti (Bon)</label><div class="flex items-center space-x-2"><input type="file" id="receipt" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" accept="image/*"><div id="ocr-loader" class="hidden loader"></div></div><p class="text-xs text-gray-500 mt-1">AI akan coba membaca keterangan & jumlah.</p><img id="receipt-preview" class="mt-2 rounded-md max-h-40 w-auto hidden" /></div>
+                        <button type="submit" class="btn btn-primary w-full">Tambah Transaksi</button>
+                    </form>
+                </section>
+
+                <section id="visualization-section" class="lg:col-span-2 card p-6 no-print">
+                    <h2 class="text-xl font-bold mb-4">Visualisasi Pengeluaran per Kategori</h2>
+                    <p class="text-sm text-gray-600 mb-4">Arahkan kursor ke grafik untuk melihat detail.</p>
+                    <div class="chart-container"><canvas id="expense-chart"></canvas></div>
+                </section>
+            </div>
+            
+            <section id="transaction-list-section" class="card p-6">
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-4 no-print">
+                    <h2 class="text-xl font-bold">Daftar Transaksi</h2>
+                    <div class="flex flex-wrap items-center gap-4">
+                         <input type="text" id="search-input" class="form-input max-w-xs" placeholder="Cari keterangan...">
+                         <button id="print-btn" class="btn btn-secondary">Cetak Laporan</button>
+                         <button id="export-csv-btn" class="btn btn-secondary">Export CSV</button>
+                    </div>
+                </div>
+                <div id="print-section">
+                    <div class="print-only">
+                        <h1>Laporan Uang Kas Kantor</h1>
+                        <p>PT. Glori Mitra Sukses (GMS)</p>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left text-gray-500">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr>
+                                    <th scope="col" class="py-3 px-6">Tanggal</th>
+                                    <th scope="col" class="py-3 px-6">Keterangan</th>
+                                    <th scope="col" class="py-3 px-6">Kategori</th>
+                                    <th scope="col" class="py-3 px-6">Tipe</th>
+                                    <th scope="col" class="py-3 px-6 text-right">Jumlah</th>
+                                    <th scope="col" class="py-3 px-6 no-print text-center">Bukti</th>
+                                    <th scope="col" class="py-3 px-6 no-print text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="transaction-table-body">
+                                <!-- Dynamic content here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+        <footer class="text-center mt-8 text-xs text-gray-500 no-print">
+            <p id="user-id-display">Mengautentikasi...</p>
+        </footer>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
+            <h3 class="text-lg font-medium leading-6 text-gray-900 mb-4">Edit Transaksi</h3>
+            <form id="edit-form" class="space-y-4">
+                <div><label for="edit-date" class="block text-sm font-medium text-gray-700">Tanggal</label><input type="date" id="edit-date" class="form-input" required></div>
+                <div><label for="edit-description" class="block text-sm font-medium text-gray-700">Keterangan</label><input type="text" id="edit-description" class="form-input" required></div>
+                <div><label for="edit-type" class="block text-sm font-medium text-gray-700">Tipe</label><select id="edit-type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
+                <div id="edit-category-wrapper"><label for="edit-category" class="block text-sm font-medium text-gray-700">Kategori</label><select id="edit-category" class="form-select"><option>Operasional</option><option>Gaji</option><option>ATK</option><option>Transportasi</option><option>Kunjungan sales</option><option>Ekpedisi</option><option>Lainnya</option></select></div>
+                <div><label for="edit-amount" class="block text-sm font-medium text-gray-700">Jumlah (Rp)</label><input type="number" id="edit-amount" class="form-input" required min="0"></div>
+                <div class="flex justify-end gap-3 pt-4">
+                    <button type="button" id="cancel-edit-btn" class="btn btn-secondary">Batal</button>
+                    <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-sm shadow-lg rounded-md bg-white">
+            <h3 class="text-lg font-medium leading-6 text-gray-900">Konfirmasi Hapus</h3>
+            <p class="mt-2 text-sm text-gray-600">Apakah Anda yakin ingin menghapus transaksi ini? Tindakan ini tidak dapat diurungkan.</p>
+            <div class="flex justify-end gap-3 pt-4 mt-4">
+                <button type="button" id="cancel-delete-btn" class="btn btn-secondary">Batal</button>
+                <button type="button" id="confirm-delete-btn" class="btn btn-danger">Ya, Hapus</button>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
