@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laporan Kas Kantor - PT. GMS (Final Sorted)</title>
+    <title>Laporan Kas Kantor - PT. GMS (Final dengan User ID)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -71,6 +71,7 @@
         const showLoginBtn = document.getElementById('show-login-btn');
         const logoutBtn = document.getElementById('logout-btn');
         const userEmailDisplay = document.getElementById('user-email-display');
+        const userIdDisplay = document.getElementById('user-id-display');
         
         const initialBalanceEl = document.getElementById('initial-balance');
         const initialBalanceInput = document.getElementById('initial-balance-input');
@@ -109,6 +110,7 @@
             if (user) {
                 userId = user.uid;
                 userEmailDisplay.textContent = user.email;
+                userIdDisplay.textContent = `Status: Login Berhasil | ID Pengguna: ${user.uid}`;
                 dbCollectionPath = `/artifacts/${firebaseConfig.appId}/users/${userId}/transactions_gms_firestore`;
                 userSettingsDocRef = doc(db, `/artifacts/${firebaseConfig.appId}/users/${userId}/settings/main`);
                 
@@ -370,6 +372,10 @@
                 <div id="print-section"><div class="print-only"><h1>Laporan Uang Kas Kantor</h1><p>PT. Glori Mitra Sukses (GMS)</p></div><div class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-500"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" class="py-3 px-6">Tanggal</th><th scope="col" class="py-3 px-6">Keterangan</th><th scope="col" class="py-3 px-6">Kategori</th><th scope="col" class="py-3 px-6">Tipe</th><th scope="col" class="py-3 px-6 text-right">Jumlah</th><th scope="col" class="py-3 px-6 no-print text-center">Aksi</th></tr></thead><tbody id="transaction-table-body"></tbody></table></div></div>
             </section>
         </main>
+        
+        <footer class="text-center mt-8 text-xs text-gray-500 no-print">
+            <p id="user-id-display">Mengautentikasi...</p>
+        </footer>
     </div>
 
     <!-- Modals (Edit and Delete) -->
