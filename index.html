@@ -16,7 +16,19 @@
         
         // This setup allows the app to work in the collaborative environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "DEMO", authDomain: "DEMO", projectId: "DEMO" };
+        
+        // GANTI BAGIAN DI BAWAH INI DENGAN KONFIGURASI DARI PROYEK FIREBASE ANDA (Lihat Langkah 2 di Panduan)
+        const firebaseConfig = {
+ 	  apiKey: "AIzaSyBN6dL5426rxsTg9uMWh7TY7CsUUoMShtc",
+  	  authDomain: "aplikasi-kas-gms.firebaseapp.com",
+  	  projectId: "aplikasi-kas-gms",
+  	  storageBucket: "aplikasi-kas-gms.firebasestorage.app",
+  	  messagingSenderId: "114489294414",
+  	  appId: "1:114489294414:web:12c579bd0748d462180d1f",
+  	  measurementId: "G-ZQVBY0TYZ6"
+	};
+        // ------------------------------------------------------------------------------------------
+
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // Initialize Firebase
@@ -525,3 +537,4 @@
 
 </body>
 </html>
+
