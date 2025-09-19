@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laporan Kas Kantor - PT. GMS (Versi Login)</title>
+    <title>Laporan Kas Kantor - PT. GMS (Final Update)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -18,17 +18,16 @@
             signInWithEmailAndPassword,
             signOut
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // GANTI BAGIAN DI BAWAH INI DENGAN KONFIGURASI DARI PROYEK FIREBASE ANDA
         const firebaseConfig = {
           apiKey: "AIzaSyBN6dL5426rxsTg9uMWh7TY7CsUUoMShtc",
-  	      authDomain: "aplikasi-kas-gms.firebaseapp.com",
-  	      projectId: "aplikasi-kas-gms",
-  	      storageBucket: "aplikasi-kas-gms.firebasestorage.app",
-  	      messagingSenderId: "114489294414",
-  	      appId: "1:114489294414:web:12c579bd0748d462180d1f",
-  	      measurementId: "G-ZQVBY0TYZ6"
+          authDomain: "aplikasi-kas-gms.firebaseapp.com",
+          projectId: "aplikasi-kas-gms",
+          storageBucket: "aplikasi-kas-gms.appspot.com",
+          messagingSenderId: "114489294414",
+          appId: "1:114489294414:web:12c579bd0748d462180d1f"
         };
         // ------------------------------------------------------------------------------------------
 
@@ -40,20 +39,11 @@
         if (firebaseConfig.apiKey.startsWith("MASUKKAN")) {
             if(configErrorEl && authForms) {
                 authForms.classList.add('hidden');
-                configErrorEl.innerHTML = `
-                    <h3 class="text-xl font-semibold mb-4 text-center text-red-600">Konfigurasi Dibutuhkan</h3>
-                    <p class="text-center text-gray-700">
-                        Anda perlu memasukkan konfigurasi Firebase Anda ke dalam file HTML ini agar aplikasi dapat berjalan.
-                    </p>
-                    <p class="mt-2 text-sm text-center text-gray-500">
-                        Buka file <code>laporan-kas-gms-login.html</code>, cari variabel <code>firebaseConfig</code>, dan ganti nilainya dengan kunci dari proyek Firebase Anda.
-                    </p>`;
+                configErrorEl.innerHTML = `<h3 class="text-xl font-semibold mb-4 text-center text-red-600">Konfigurasi Dibutuhkan</h3><p class="text-center text-gray-700">Anda perlu memasukkan konfigurasi Firebase Anda ke dalam file HTML ini agar aplikasi dapat berjalan.</p><p class="mt-2 text-sm text-center text-gray-500">Buka file HTML, cari variabel <code>firebaseConfig</code>, dan ganti nilainya dengan kunci dari proyek Firebase Anda.</p>`;
                 configErrorEl.classList.remove('hidden');
             }
-            // Stop the script here to prevent initialization errors
             throw new Error("Firebase configuration is missing.");
         }
-
 
         // Initialize Firebase
         const app = initializeApp(firebaseConfig);
@@ -67,7 +57,9 @@
         let userId = null;
         let currentTransactionId = null;
         let dbCollectionPath = '';
+        let userSettingsDocRef = null;
         let unsubscribeFromFirestore = null; 
+        let initialBalance = 0;
 
         // --- DOM ELEMENTS ---
         const authView = document.getElementById('auth-view');
@@ -80,8 +72,11 @@
         const logoutBtn = document.getElementById('logout-btn');
         const userEmailDisplay = document.getElementById('user-email-display');
         
-        // App elements (same as before)
         const initialBalanceEl = document.getElementById('initial-balance');
+        const initialBalanceInput = document.getElementById('initial-balance-input');
+        const saveInitialBalanceBtn = document.getElementById('save-initial-balance-btn');
+        const saveStatusEl = document.getElementById('save-status');
+
         const totalIncomeEl = document.getElementById('total-income');
         const totalExpenseEl = document.getElementById('total-expense');
         const finalBalanceEl = document.getElementById('final-balance');
@@ -110,28 +105,27 @@
         const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
 
         // --- AUTHENTICATION LOGIC ---
-        
         onAuthStateChanged(auth, user => {
             if (user) {
-                // User is signed in
                 userId = user.uid;
                 userEmailDisplay.textContent = user.email;
                 dbCollectionPath = `/artifacts/${firebaseConfig.appId}/users/${userId}/transactions_gms_firestore`;
+                userSettingsDocRef = doc(db, `/artifacts/${firebaseConfig.appId}/users/${userId}/settings/main`);
                 
                 authView.classList.add('hidden');
                 appView.classList.remove('hidden');
 
+                loadUserSettings();
                 listenToTransactions();
                 console.log("User logged in:", userId);
             } else {
-                // User is signed out
-                if (unsubscribeFromFirestore) {
-                    unsubscribeFromFirestore(); // Stop listening to old data
-                }
+                if (unsubscribeFromFirestore) unsubscribeFromFirestore();
                 userId = null;
                 dbCollectionPath = '';
+                userSettingsDocRef = null;
                 transactions = [];
-                render(); // Clear the table
+                initialBalance = 0;
+                render();
                 
                 authView.classList.remove('hidden');
                 appView.classList.add('hidden');
@@ -139,78 +133,54 @@
             }
         });
 
-        const handleRegister = (e) => {
-            e.preventDefault();
-            const email = registerForm.email.value;
-            const password = registerForm.password.value;
-            authError.textContent = '';
+        const handleRegister = (e) => { e.preventDefault(); const email = registerForm.email.value; const password = registerForm.password.value; authError.textContent = ''; createUserWithEmailAndPassword(auth, email, password).then(cred => { console.log("User registered:", cred.user); registerForm.reset(); }).catch(err => { authError.textContent = getFriendlyAuthError(err.code); console.error("Register error:", err); }); };
+        const handleLogin = (e) => { e.preventDefault(); const email = loginForm.email.value; const password = loginForm.password.value; authError.textContent = ''; signInWithEmailAndPassword(auth, email, password).then(cred => { console.log("User logged in:", cred.user); loginForm.reset(); }).catch(err => { authError.textContent = getFriendlyAuthError(err.code); console.error("Login error:", err); }); };
+        const handleLogout = () => { signOut(auth).catch(err => console.error("Logout error:", err)); };
+        function getFriendlyAuthError(c){switch(c){case'auth/invalid-email':return'Format email tidak valid.';case'auth/user-not-found':case'auth/wrong-password':case'auth/invalid-credential':return'Email atau password salah.';case'auth/email-already-in-use':return'Email ini sudah terdaftar. Silakan login.';case'auth/weak-password':return'Password terlalu lemah (min. 6 karakter).';default:return'Terjadi kesalahan. Coba lagi.';}}
 
-            createUserWithEmailAndPassword(auth, email, password)
-                .then((userCredential) => {
-                    console.log("User registered successfully:", userCredential.user);
-                    registerForm.reset();
-                })
-                .catch((error) => {
-                    authError.textContent = getFriendlyAuthError(error.code);
-                    console.error("Registration error:", error);
-                });
-        };
+        // --- USER SETTINGS (Initial Balance) ---
+        async function loadUserSettings() {
+            if (!userSettingsDocRef) return;
+            try {
+                const docSnap = await getDoc(userSettingsDocRef);
+                if (docSnap.exists()) {
+                    initialBalance = docSnap.data().initialBalance || 0;
+                } else {
+                    initialBalance = 0;
+                }
+                initialBalanceInput.value = initialBalance;
+                updateSummary();
+            } catch (error) {
+                console.error("Error loading user settings:", error);
+                initialBalance = 0;
+                updateSummary();
+            }
+        }
 
-        const handleLogin = (e) => {
-            e.preventDefault();
-            const email = loginForm.email.value;
-            const password = loginForm.password.value;
-            authError.textContent = '';
-            
-            signInWithEmailAndPassword(auth, email, password)
-                .then((userCredential) => {
-                    console.log("User logged in successfully:", userCredential.user);
-                    loginForm.reset();
-                })
-                .catch((error) => {
-                    authError.textContent = getFriendlyAuthError(error.code);
-                    console.error("Login error:", error);
-                });
-        };
-
-        const handleLogout = () => {
-            signOut(auth).catch((error) => {
-                console.error("Logout error:", error);
-            });
-        };
-
-        function getFriendlyAuthError(errorCode) {
-            switch (errorCode) {
-                case 'auth/invalid-email':
-                    return 'Format email tidak valid.';
-                case 'auth/user-not-found':
-                case 'auth/wrong-password':
-                case 'auth/invalid-credential':
-                    return 'Email atau password salah.';
-                case 'auth/email-already-in-use':
-                    return 'Email ini sudah terdaftar. Silakan login.';
-                case 'auth/weak-password':
-                    return 'Password terlalu lemah. Gunakan minimal 6 karakter.';
-                default:
-                    return 'Terjadi kesalahan. Silakan coba lagi.';
+        async function saveInitialBalance() {
+            if (!userSettingsDocRef) return;
+            const newBalance = parseFloat(initialBalanceInput.value) || 0;
+            saveStatusEl.textContent = 'Menyimpan...';
+            try {
+                await setDoc(userSettingsDocRef, { initialBalance: newBalance });
+                initialBalance = newBalance;
+                updateSummary();
+                saveStatusEl.textContent = 'Tersimpan!';
+                setTimeout(() => { saveStatusEl.textContent = ''; }, 2000);
+            } catch (error) {
+                console.error("Error saving initial balance:", error);
+                saveStatusEl.textContent = 'Gagal menyimpan.';
             }
         }
         
         // --- FIRESTORE LISTENER ---
         function listenToTransactions() {
-            if (unsubscribeFromFirestore) {
-                unsubscribeFromFirestore();
-            }
+            if (unsubscribeFromFirestore) unsubscribeFromFirestore();
             const collectionRef = collection(db, dbCollectionPath);
             unsubscribeFromFirestore = onSnapshot(collectionRef, (querySnapshot) => {
-                transactions = [];
-                querySnapshot.forEach((doc) => {
-                    transactions.push({ id: doc.id, ...doc.data() });
-                });
+                transactions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 render();
-            }, (error) => {
-                console.error("Error fetching data:", error);
-            });
+            }, (error) => console.error("Error fetching data:", error));
         }
         
         // --- ALL OTHER FUNCTIONS (render, updateSummary, CRUD, etc.) ---
@@ -235,10 +205,10 @@
         function updateSummary() {
             const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
             const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-            initialBalanceEl.textContent = formatCurrency(0);
+            initialBalanceEl.textContent = formatCurrency(initialBalance);
             totalIncomeEl.textContent = formatCurrency(totalIncome);
             totalExpenseEl.textContent = formatCurrency(totalExpense);
-            finalBalanceEl.textContent = formatCurrency(totalIncome - totalExpense);
+            finalBalanceEl.textContent = formatCurrency(initialBalance + totalIncome - totalExpense);
         }
         function renderChart() {
             if (!document.getElementById('expense-chart')) return;
@@ -248,23 +218,10 @@
             if (expenseChart) expenseChart.destroy(); if (labels.length === 0) return;
             expenseChart = new Chart(ctx, { type: 'doughnut', data: { labels: labels, datasets: [{ label: 'Pengeluaran', data: data, backgroundColor: backgroundColors.slice(0, labels.length), borderColor: '#FFFFFF', borderWidth: 2, }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: context => `${context.label || ''}: ${formatCurrency(context.parsed)}` } } } } });
         }
-        async function handleFormSubmit(e) {
-            e.preventDefault();
-            const newTransaction = { date: dateInput.value, description: descriptionInput.value.trim(), type: typeInput.value, category: typeInput.value === 'expense' ? categoryInput.value : null, amount: parseFloat(amountInput.value), createdBy: userId, createdAt: new Date().toISOString() };
-            try { await addDoc(collection(db, dbCollectionPath), newTransaction); transactionForm.reset(); dateInput.valueAsDate = new Date(); } catch (error) { console.error("Error adding document: ", error); alert("Gagal menyimpan transaksi."); }
-        }
-        async function handleEditFormSubmit(e) {
-            e.preventDefault(); if (!currentTransactionId) return;
-            const updatedData = { date: editDate.value, description: editDescription.value.trim(), type: editType.value, category: editType.value === 'expense' ? editCategory.value : null, amount: parseFloat(editAmount.value), };
-            try { await updateDoc(doc(db, dbCollectionPath, currentTransactionId), updatedData); closeEditModal(); } catch (error) { console.error("Error updating document: ", error); alert("Gagal memperbarui transaksi."); }
-        }
-        async function handleDeleteConfirmed() {
-            if (!currentTransactionId) return;
-            try { await deleteDoc(doc(db, dbCollectionPath, currentTransactionId)); closeDeleteModal(); } catch (error) { console.error("Error deleting document: ", error); alert("Gagal menghapus transaksi."); }
-        }
-        function openEditModal(transaction) {
-            currentTransactionId = transaction.id; editDate.value = transaction.date; editDescription.value = transaction.description; editType.value = transaction.type; editAmount.value = transaction.amount; if (transaction.type === 'expense') { editCategory.value = transaction.category; } toggleCategoryAndReceipt(editType, editCategoryWrapper); editModal.classList.remove('hidden');
-        }
+        async function handleFormSubmit(e) { e.preventDefault(); const newTransaction = { date: dateInput.value, description: descriptionInput.value.trim(), type: typeInput.value, category: typeInput.value === 'expense' ? categoryInput.value : null, amount: parseFloat(amountInput.value), createdBy: userId, createdAt: new Date().toISOString() }; try { await addDoc(collection(db, dbCollectionPath), newTransaction); transactionForm.reset(); dateInput.valueAsDate = new Date(); } catch (error) { console.error("Error adding document: ", error); alert("Gagal menyimpan transaksi."); } }
+        async function handleEditFormSubmit(e) { e.preventDefault(); if (!currentTransactionId) return; const updatedData = { date: editDate.value, description: editDescription.value.trim(), type: editType.value, category: editType.value === 'expense' ? editCategory.value : null, amount: parseFloat(editAmount.value), }; try { await updateDoc(doc(db, dbCollectionPath, currentTransactionId), updatedData); closeEditModal(); } catch (error) { console.error("Error updating document: ", error); alert("Gagal memperbarui transaksi."); } }
+        async function handleDeleteConfirmed() { if (!currentTransactionId) return; try { await deleteDoc(doc(db, dbCollectionPath, currentTransactionId)); closeDeleteModal(); } catch (error) { console.error("Error deleting document: ", error); alert("Gagal menghapus transaksi."); } }
+        function openEditModal(transaction) { currentTransactionId = transaction.id; editDate.value = transaction.date; editDescription.value = transaction.description; editType.value = transaction.type; editAmount.value = transaction.amount; if (transaction.type === 'expense') { editCategory.value = transaction.category; } toggleCategoryAndReceipt(editType, editCategoryWrapper); editModal.classList.remove('hidden'); }
         function closeEditModal() { currentTransactionId = null; editModal.classList.add('hidden'); editForm.reset(); }
         function openDeleteModal(transactionId) { currentTransactionId = transactionId; deleteModal.classList.remove('hidden'); }
         function closeDeleteModal() { currentTransactionId = null; deleteModal.classList.add('hidden'); }
@@ -272,14 +229,14 @@
         function exportToCSV() {
             const headers = ['Tanggal', 'Keterangan', 'Kategori', 'Debet (Pemasukan)', 'Kredit (Pengeluaran)', 'Saldo'];
             const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
-            let runningBalance = 0;
+            let runningBalance = initialBalance;
             const rows = sortedTransactions.map(t => {
                 const debet = t.type === 'income' ? t.amount : '';
                 const kredit = t.type === 'expense' ? t.amount : '';
                 runningBalance += (t.type === 'income' ? t.amount : -t.amount);
                 return [ new Date(t.date).toLocaleDateString('id-ID'), `"${t.description.replace(/"/g, '""')}"`, t.category || '', debet, kredit, runningBalance ];
             });
-            let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n${headers.join(',')}\n${rows.map(e => e.join(',')).join('\n')}\n\n,,,,"Saldo Akhir:",${runningBalance}`;
+            let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\nSaldo Awal:,"${initialBalance}"\n\n${headers.join(',')}\n${rows.map(e => e.join(',')).join('\n')}\n\n,,,,,"Saldo Akhir:",${runningBalance}`;
             const link = document.createElement("a");
             link.setAttribute("href", encodeURI('data:text/csv;charset=utf-8,' + '\uFEFF' + csvContent));
             link.setAttribute("download", `laporan_kas_gms_${new Date().toISOString().slice(0,10)}.csv`);
@@ -291,31 +248,16 @@
             loginForm.addEventListener('submit', handleLogin);
             registerForm.addEventListener('submit', handleRegister);
             logoutBtn.addEventListener('click', handleLogout);
-            showRegisterBtn.addEventListener('click', () => {
-                loginForm.classList.add('hidden');
-                registerForm.classList.remove('hidden');
-                document.getElementById('show-register-btn-text').classList.add('hidden');
-                document.getElementById('show-login-btn-text').classList.remove('hidden');
-                authError.textContent = '';
-            });
-            showLoginBtn.addEventListener('click', () => {
-                registerForm.classList.add('hidden');
-                loginForm.classList.remove('hidden');
-                document.getElementById('show-register-btn-text').classList.remove('hidden');
-                document.getElementById('show-login-btn-text').classList.add('hidden');
-                authError.textContent = '';
-            });
+            saveInitialBalanceBtn.addEventListener('click', saveInitialBalance);
 
-            // App event listeners
+            showRegisterBtn.addEventListener('click', () => { loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); document.getElementById('show-register-btn-text').classList.add('hidden'); document.getElementById('show-login-btn-text').classList.remove('hidden'); authError.textContent = ''; });
+            showLoginBtn.addEventListener('click', () => { registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); document.getElementById('show-register-btn-text').classList.remove('hidden'); document.getElementById('show-login-btn-text').classList.add('hidden'); authError.textContent = ''; });
             transactionForm.addEventListener('submit', handleFormSubmit);
             editForm.addEventListener('submit', handleEditFormSubmit);
             cancelEditBtn.addEventListener('click', closeEditModal);
             confirmDeleteBtn.addEventListener('click', handleDeleteConfirmed);
             cancelDeleteBtn.addEventListener('click', closeDeleteModal);
-            document.getElementById('transaction-list-section').addEventListener('click', (e) => {
-                if (e.target.classList.contains('edit-btn')) { const transaction = transactions.find(t => t.id === e.target.dataset.id); if (transaction) openEditModal(transaction); }
-                if (e.target.classList.contains('delete-btn')) { openDeleteModal(e.target.dataset.id); }
-            });
+            document.getElementById('transaction-list-section').addEventListener('click', (e) => { if (e.target.classList.contains('edit-btn')) { const transaction = transactions.find(t => t.id === e.target.dataset.id); if (transaction) openEditModal(transaction); } if (e.target.classList.contains('delete-btn')) { openDeleteModal(e.target.dataset.id); } });
             searchInput.addEventListener('input', render);
             printBtn.addEventListener('click', () => window.print());
             exportCsvBtn.addEventListener('click', exportToCSV);
@@ -328,6 +270,7 @@
         body { font-family: 'Inter', sans-serif; background-color: #F8F7F4; color: #333; }
         .card { background-color: #FFFFFF; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
         .btn { border-radius: 0.5rem; padding: 0.625rem 1.25rem; font-weight: 500; transition: all 0.2s ease-in-out; border: 1px solid transparent; cursor: pointer; }
+        .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.875rem; }
         .btn-primary { background-color: #3B82F6; color: white; } .btn-primary:hover { background-color: #2563EB; }
         .btn-secondary { background-color: #E5E7EB; color: #374151; border-color: #D1D5DB; } .btn-secondary:hover { background-color: #D1D5DB; }
         .btn-danger { background-color: #EF4444; color: white; } .btn-danger:hover { background-color: #DC2626; }
@@ -341,56 +284,32 @@
     <!-- Authentication View -->
     <div id="auth-view" class="flex items-center justify-center min-h-screen bg-gray-100">
         <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
-            <div>
-                <h2 class="text-2xl font-bold text-center">Laporan Kas Kantor</h2>
-                <p class="text-center text-gray-600">PT. Glori Mitra Sukses (GMS)</p>
-            </div>
-            
-            <div id="config-error" class="hidden">
-                <!-- Error message will be inserted here by JavaScript -->
-            </div>
-            
+            <div><h2 class="text-2xl font-bold text-center">Laporan Kas Kantor</h2><p class="text-center text-gray-600">PT. Glori Mitra Sukses (GMS)</p></div>
+            <div id="config-error" class="hidden"></div>
             <div id="auth-forms">
-                <form id="login-form">
-                    <h3 class="text-xl font-semibold mb-4 text-center">Login</h3>
-                    <div class="space-y-4">
-                        <div><label for="login-email" class="sr-only">Email</label><input type="email" id="login-email" name="email" class="form-input" placeholder="Alamat email" required></div>
-                        <div><label for="login-password" class="sr-only">Password</label><input type="password" id="login-password" name="password" class="form-input" placeholder="Password" required></div>
-                    </div>
-                    <button type="submit" class="w-full mt-6 btn btn-primary">Masuk</button>
-                </form>
-
-                <form id="register-form" class="hidden">
-                    <h3 class="text-xl font-semibold mb-4 text-center">Daftar Akun Baru</h3>
-                    <div class="space-y-4">
-                        <div><label for="register-email" class="sr-only">Email</label><input type="email" id="register-email" name="email" class="form-input" placeholder="Alamat email" required></div>
-                        <div><label for="register-password" class="sr-only">Password</label><input type="password" id="register-password" name="password" class="form-input" placeholder="Password (min. 6 karakter)" required></div>
-                    </div>
-                    <button type="submit" class="w-full mt-6 btn btn-primary">Daftar</button>
-                </form>
-
+                <form id="login-form"><h3 class="text-xl font-semibold mb-4 text-center">Login</h3><div class="space-y-4"><div><label for="login-email" class="sr-only">Email</label><input type="email" id="login-email" name="email" class="form-input" placeholder="Alamat email" required></div><div><label for="login-password" class="sr-only">Password</label><input type="password" id="login-password" name="password" class="form-input" placeholder="Password" required></div></div><button type="submit" class="w-full mt-6 btn btn-primary">Masuk</button></form>
+                <form id="register-form" class="hidden"><h3 class="text-xl font-semibold mb-4 text-center">Daftar Akun Baru</h3><div class="space-y-4"><div><label for="register-email" class="sr-only">Email</label><input type="email" id="register-email" name="email" class="form-input" placeholder="Alamat email" required></div><div><label for="register-password" class="sr-only">Password</label><input type="password" id="register-password" name="password" class="form-input" placeholder="Password (min. 6 karakter)" required></div></div><button type="submit" class="w-full mt-6 btn btn-primary">Daftar</button></form>
                 <p id="auth-error" class="text-sm text-center text-red-600 h-4"></p>
-
-                <div class="text-sm text-center text-gray-600">
-                    <p id="show-register-btn-text">Belum punya akun? <button type="button" id="show-register-btn" class="font-medium text-blue-600 hover:underline">Daftar di sini</button></p>
-                    <p id="show-login-btn-text" class="hidden">Sudah punya akun? <button type="button" id="show-login-btn" class="font-medium text-blue-600 hover:underline">Login di sini</button></p>
-                </div>
+                <div class="text-sm text-center text-gray-600"><p id="show-register-btn-text">Belum punya akun? <button type="button" id="show-register-btn" class="font-medium text-blue-600 hover:underline">Daftar di sini</button></p><p id="show-login-btn-text" class="hidden">Sudah punya akun? <button type="button" id="show-login-btn" class="font-medium text-blue-600 hover:underline">Login di sini</button></p></div>
             </div>
         </div>
     </div>
 
     <!-- Main App View -->
     <div id="app-view" class="hidden max-w-7xl mx-auto p-4 md:p-8">
-        <header class="flex flex-wrap justify-between items-center text-center mb-8 no-print">
-            <div>
-                <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Laporan Uang Kas Kantor</h1>
-                <p class="text-lg text-gray-600">PT. Glori Mitra Sukses (GMS)</p>
-            </div>
-            <div class="text-right">
-                <p id="user-email-display" class="text-sm text-gray-700"></p>
-                <button id="logout-btn" class="btn btn-secondary mt-1">Logout</button>
-            </div>
+        <header class="flex flex-wrap justify-between items-start text-center mb-4 no-print">
+            <div><h1 class="text-3xl md:text-4xl font-bold text-gray-800">Laporan Uang Kas Kantor</h1><p class="text-lg text-gray-600">PT. Glori Mitra Sukses (GMS)</p></div>
+            <div class="text-right"><p id="user-email-display" class="text-sm text-gray-700"></p><button id="logout-btn" class="btn btn-secondary mt-1">Logout</button></div>
         </header>
+
+        <section class="card p-4 mb-8 no-print">
+            <div class="flex flex-wrap items-center gap-4">
+                <label for="initial-balance-input" class="font-medium text-gray-700">Saldo Awal (Rp):</label>
+                <input type="number" id="initial-balance-input" class="form-input w-48" placeholder="0">
+                <button id="save-initial-balance-btn" class="btn btn-primary btn-sm">Simpan</button>
+                <span id="save-status" class="text-sm text-green-600"></span>
+            </div>
+        </section>
 
         <main>
             <section id="summary-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 no-print">
@@ -407,7 +326,36 @@
                         <div><label for="date" class="block text-sm font-medium text-gray-700">Tanggal</label><input type="date" id="date" class="form-input" required></div>
                         <div><label for="description" class="block text-sm font-medium text-gray-700">Keterangan</label><input type="text" id="description" class="form-input" placeholder="Contoh: Pembelian ATK" required></div>
                         <div><label for="type" class="block text-sm font-medium text-gray-700">Tipe</label><select id="type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
-                        <div id="category-wrapper"><label for="category" class="block text-sm font-medium text-gray-700">Kategori</label><select id="category" class="form-select"><option>Operasional</option><option>Gaji</option><option>ATK</option><option>Transportasi</option><option>Kunjungan sales</option><option>Ekpedisi</option><option>Lainnya</option></select></div>
+                        <div id="category-wrapper">
+                            <label for="category" class="block text-sm font-medium text-gray-700">Kategori</label>
+                            <select id="category" class="form-select">
+                                <option>530099 - Biaya bongkar container</option>
+                                <option>540010 - Biaya packaging logistik</option>
+                                <option>540020 - Biaya packing stiker, dus dll - product</option>
+                                <option>610034 - Biaya uang makan / transport</option>
+                                <option>610041 - Biaya RTK / Rumah tangga kantor</option>
+                                <option>610043 - Biaya Peralatan kantor</option>
+                                <option>610045 - Biaya Perlengkapan kantor</option>
+                                <option>610042 - Biaya Ateka</option>
+                                <option>610044 - Biaya Pos dan Materai</option>
+                                <option>610505 - Biaya BBm, Tol, Parkir</option>
+                                <option>610902 - Biaya STNK, KIR & Pajak Kendaraan</option>
+                                <option>610081 - Biaya Asuransi</option>
+                                <option>610091 - Biaya Pajak lainnya</option>
+                                <option>610201 - Biaya Promosi, brosur, dll</option>
+                                <option>610205 - Biaya Pemasaran dll</option>
+                                <option>610209 - Biaya Iklan, banner, pameran, sponsor</option>
+                                <option>610208 - Biaya Perjalanan Dinas</option>
+                                <option>610599 - Biaya bongkar muat ekspedisi</option>
+                                <option>6105.03- Biaya Ekspedisi lainnya</option>
+                                <option>620001 - Biaya Listrik</option>
+                                <option>620002 - Biaya PAM dan maintenace, keamanan dll</option>
+                                <option>620003 - Biaya Telp, internet dll</option>
+                                <option>620120 - Biaya Pemeliharaan Gedung</option>
+                                <option>620130 - Biaya Pemeliharaan Kendaraan</option>
+                                <option>00000 - Lainya</option>
+                            </select>
+                        </div>
                         <div><label for="amount" class="block text-sm font-medium text-gray-700">Jumlah (Rp)</label><input type="number" id="amount" class="form-input" placeholder="50000" required min="0"></div>
                         <button type="submit" class="btn btn-primary w-full">Tambah Transaksi</button>
                     </form>
@@ -425,8 +373,48 @@
     </div>
 
     <!-- Modals (Edit and Delete) -->
-    <div id="edit-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50"><div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white"><h3 class="text-lg font-medium text-gray-900 mb-4">Edit Transaksi</h3><form id="edit-form" class="space-y-4"><div><label for="edit-date" class="block text-sm">Tanggal</label><input type="date" id="edit-date" class="form-input" required></div><div><label for="edit-description" class="block text-sm">Keterangan</label><input type="text" id="edit-description" class="form-input" required></div><div><label for="edit-type" class="block text-sm">Tipe</label><select id="edit-type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div><div id="edit-category-wrapper"><label for="edit-category" class="block text-sm">Kategori</label><select id="edit-category" class="form-select"><option>Operasional</option><option>Gaji</option><option>ATK</option><option>Transportasi</option><option>Kunjungan sales</option><option>Ekpedisi</option><option>Lainnya</option></select></div><div><label for="edit-amount" class="block text-sm">Jumlah (Rp)</label><input type="number" id="edit-amount" class="form-input" required min="0"></div><div class="flex justify-end gap-3 pt-4"><button type="button" id="cancel-edit-btn" class="btn btn-secondary">Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div></form></div></div>
+    <div id="edit-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50">
+        <div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Edit Transaksi</h3>
+            <form id="edit-form" class="space-y-4">
+                <div><label for="edit-date" class="block text-sm">Tanggal</label><input type="date" id="edit-date" class="form-input" required></div>
+                <div><label for="edit-description" class="block text-sm">Keterangan</label><input type="text" id="edit-description" class="form-input" required></div>
+                <div><label for="edit-type" class="block text-sm">Tipe</label><select id="edit-type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
+                <div id="edit-category-wrapper">
+                    <label for="edit-category" class="block text-sm">Kategori</label>
+                    <select id="edit-category" class="form-select">
+                        <option>530099 - Biaya bongkar container</option>
+                        <option>540010 - Biaya packaging logistik</option>
+                        <option>540020 - Biaya packing stiker, dus dll - product</option>
+                        <option>610034 - Biaya uang makan / transport</option>
+                        <option>610041 - Biaya RTK / Rumah tangga kantor</option>
+                        <option>610043 - Biaya Peralatan kantor</option>
+                        <option>610045 - Biaya Perlengkapan kantor</option>
+                        <option>610042 - Biaya Ateka</option>
+                        <option>610044 - Biaya Pos dan Materai</option>
+                        <option>610505 - Biaya BBm, Tol, Parkir</option>
+                        <option>610902 - Biaya STNK, KIR & Pajak Kendaraan</option>
+                        <option>610081 - Biaya Asuransi</option>
+                        <option>610091 - Biaya Pajak lainnya</option>
+                        <option>610201 - Biaya Promosi, brosur, dll</option>
+                        <option>610205 - Biaya Pemasaran dll</option>
+                        <option>610209 - Biaya Iklan, banner, pameran, sponsor</option>
+                        <option>610208 - Biaya Perjalanan Dinas</option>
+                        <option>610599 - Biaya bongkar muat ekspedisi</option>
+                        <option>6105.03- Biaya Ekspedisi lainnya</option>
+                        <option>620001 - Biaya Listrik</option>
+                        <option>620002 - Biaya PAM dan maintenace, keamanan dll</option>
+                        <option>620003 - Biaya Telp, internet dll</option>
+                        <option>620120 - Biaya Pemeliharaan Gedung</option>
+                        <option>620130 - Biaya Pemeliharaan Kendaraan</option>
+                        <option>00000 - Lainya</option>
+                    </select>
+                </div>
+                <div><label for="edit-amount" class="block text-sm">Jumlah (Rp)</label><input type="number" id="edit-amount" class="form-input" required min="0"></div>
+                <div class="flex justify-end gap-3 pt-4"><button type="button" id="cancel-edit-btn" class="btn btn-secondary">Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div>
+            </form>
+        </div>
+    </div>
     <div id="delete-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50"><div class="relative top-20 mx-auto p-5 border w-full max-w-sm shadow-lg rounded-md bg-white"><h3 class="text-lg font-medium text-gray-900">Konfirmasi Hapus</h3><p class="mt-2 text-sm text-gray-600">Apakah Anda yakin ingin menghapus transaksi ini?</p><div class="flex justify-end gap-3 pt-4 mt-4"><button type="button" id="cancel-delete-btn" class="btn btn-secondary">Batal</button><button type="button" id="confirm-delete-btn" class="btn btn-danger">Ya, Hapus</button></div></div></div>
 </body>
 </html>
-
