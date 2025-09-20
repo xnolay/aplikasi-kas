@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laporan Kas Kantor - PT. GMS (Impor Kategori)</title>
+    <title>Laporan Kas Kantor - PT. GMS (Generate PDF)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Tambahan library untuk membuat PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -13,7 +14,13 @@
     <script type="module">
         // Firebase SDK
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getAuth, 
+            onAuthStateChanged,
+            createUserWithEmailAndPassword,
+            signInWithEmailAndPassword,
+            signOut
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, setDoc, getDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // GANTI BAGIAN DI BAWAH INI DENGAN KONFIGURASI DARI PROYEK FIREBASE ANDA
@@ -27,13 +34,15 @@
         };
         // ------------------------------------------------------------------------------------------
 
-        // --- DOM ELEMENTS & CONFIG CHECK ---
+        // --- DOM ELEMENTS (early access for config check) ---
         const configErrorEl = document.getElementById('config-error');
         const authForms = document.getElementById('auth-forms');
-        if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("MASUKKAN")) {
-             if(configErrorEl && authForms) {
+
+        // --- CONFIGURATION CHECK ---
+        if (firebaseConfig.apiKey.startsWith("MASUKKAN")) {
+            if(configErrorEl && authForms) {
                 authForms.classList.add('hidden');
-                configErrorEl.innerHTML = `<h3 class="text-xl font-semibold mb-4 text-center text-red-600">Konfigurasi Dibutuhkan</h3><p class="text-center text-gray-700">Anda perlu memasukkan konfigurasi Firebase Anda ke dalam file HTML ini agar aplikasi dapat berjalan.</p>`;
+                configErrorEl.innerHTML = `<h3 class="text-xl font-semibold mb-4 text-center text-red-600">Konfigurasi Dibutuhkan</h3><p class="text-center text-gray-700">Anda perlu memasukkan konfigurasi Firebase Anda ke dalam file HTML ini agar aplikasi dapat berjalan.</p><p class="mt-2 text-sm text-center text-gray-500">Buka file HTML, cari variabel <code>firebaseConfig</code>, dan ganti nilainya dengan kunci dari proyek Firebase Anda.</p>`;
                 configErrorEl.classList.remove('hidden');
             }
             throw new Error("Firebase configuration is missing.");
@@ -43,204 +52,233 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        
+        setLogLevel('debug');
+
         // --- GLOBAL APP STATE ---
-        let transactions = []; let expenseChart; let userId = null; let currentTransactionId = null;
-        let dbTransactionPath = ''; let dbSettingsPath = ''; let dbCategoryMasterPath = '';
-        let unsubscribe = null; let initialBalance = 0; let categoryMasterData = [];
+        let transactions = [];
+        let expenseChart;
+        let userId = null;
+        let currentTransactionId = null;
+        let dbCollectionPath = '';
+        let userSettingsDocRef = null;
+        let unsubscribeFromFirestore = null; 
+        let initialBalance = 0;
 
         // --- DOM ELEMENTS ---
-        const authView = document.getElementById('auth-view'); const appView = document.getElementById('app-view');
-        const loginForm = document.getElementById('login-form'); const registerForm = document.getElementById('register-form');
-        const authError = document.getElementById('auth-error'); const showRegisterBtn = document.getElementById('show-register-btn');
-        const showLoginBtn = document.getElementById('show-login-btn'); const logoutBtn = document.getElementById('logout-btn');
-        const userEmailDisplay = document.getElementById('user-email-display'); const userIdDisplay = document.getElementById('user-id-display');
-        const initialBalanceEl = document.getElementById('initial-balance'); const initialBalanceInput = document.getElementById('initial-balance-input');
-        const saveInitialBalanceBtn = document.getElementById('save-initial-balance-btn'); const saveStatusEl = document.getElementById('save-status');
-        const totalIncomeEl = document.getElementById('total-income'); const totalExpenseEl = document.getElementById('total-expense');
-        const finalBalanceEl = document.getElementById('final-balance'); const transactionForm = document.getElementById('transaction-form');
-        const transactionTableBody = document.getElementById('transaction-table-body'); const searchInput = document.getElementById('search-input');
-        const printBtn = document.getElementById('print-btn'); const exportCsvBtn = document.getElementById('export-csv-btn');
-        const editModal = document.getElementById('edit-modal'); const deleteModal = document.getElementById('delete-modal');
-        const manageCategoriesBtn = document.getElementById('manage-categories-btn'); const importModal = document.getElementById('import-modal');
-        const importForm = document.getElementById('import-form'); const importTextarea = document.getElementById('import-textarea');
-        const importStatus = document.getElementById('import-status'); const cancelImportBtn = document.getElementById('cancel-import-btn');
+        const authView = document.getElementById('auth-view');
+        const appView = document.getElementById('app-view');
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        const authError = document.getElementById('auth-error');
+        const showRegisterBtn = document.getElementById('show-register-btn');
+        const showLoginBtn = document.getElementById('show-login-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        const userEmailDisplay = document.getElementById('user-email-display');
+        const userIdDisplay = document.getElementById('user-id-display');
+        
+        const initialBalanceEl = document.getElementById('initial-balance');
+        const initialBalanceInput = document.getElementById('initial-balance-input');
+        const saveInitialBalanceBtn = document.getElementById('save-initial-balance-btn');
+        const saveStatusEl = document.getElementById('save-status');
 
-        // --- AUTHENTICATION ---
+        const totalIncomeEl = document.getElementById('total-income');
+        const totalExpenseEl = document.getElementById('total-expense');
+        const finalBalanceEl = document.getElementById('final-balance');
+        const transactionForm = document.getElementById('transaction-form');
+        const dateInput = document.getElementById('date');
+        const descriptionInput = document.getElementById('description');
+        const typeInput = document.getElementById('type');
+        const categoryWrapper = document.getElementById('category-wrapper');
+        const categoryInput = document.getElementById('category');
+        const amountInput = document.getElementById('amount');
+        const transactionTableBody = document.getElementById('transaction-table-body');
+        const searchInput = document.getElementById('search-input');
+        const printBtn = document.getElementById('print-btn');
+        const exportCsvBtn = document.getElementById('export-csv-btn');
+        const editModal = document.getElementById('edit-modal');
+        const editForm = document.getElementById('edit-form');
+        const editDate = document.getElementById('edit-date');
+        const editDescription = document.getElementById('edit-description');
+        const editType = document.getElementById('edit-type');
+        const editCategoryWrapper = document.getElementById('edit-category-wrapper');
+        const editCategory = document.getElementById('edit-category');
+        const editAmount = document.getElementById('edit-amount');
+        const cancelEditBtn = document.getElementById('cancel-edit-btn');
+        const deleteModal = document.getElementById('delete-modal');
+        const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+        const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+
+        // --- AUTHENTICATION LOGIC ---
         onAuthStateChanged(auth, user => {
             if (user) {
-                userId = user.uid; userEmailDisplay.textContent = user.email;
+                userId = user.uid;
+                userEmailDisplay.textContent = user.email;
                 userIdDisplay.textContent = `Status: Login Berhasil | ID Pengguna: ${user.uid}`;
-                dbTransactionPath = `/artifacts/${firebaseConfig.appId}/users/${userId}/cash_transactions`;
-                dbSettingsPath = `/artifacts/${firebaseConfig.appId}/users/${userId}/cash_settings`;
-                dbCategoryMasterPath = `/artifacts/${firebaseConfig.appId}/public/data/cash_categories`;
-                authView.classList.add('hidden'); appView.classList.remove('hidden');
-                if (user.email === 'xnolay@gmail.com') { manageCategoriesBtn.parentElement.classList.remove('hidden'); } 
-                else { manageCategoriesBtn.parentElement.classList.add('hidden'); }
-                loadInitialData();
+                dbCollectionPath = `/artifacts/${firebaseConfig.appId}/users/${userId}/transactions_gms_firestore`;
+                userSettingsDocRef = doc(db, `/artifacts/${firebaseConfig.appId}/users/${userId}/settings/main`);
+                authView.classList.add('hidden');
+                appView.classList.remove('hidden');
+                loadUserSettings();
+                listenToTransactions();
             } else {
-                if (unsubscribe) unsubscribe(); userId = null;
-                manageCategoriesBtn.parentElement.classList.add('hidden');
-                authView.classList.remove('hidden'); appView.classList.add('hidden');
+                if (unsubscribeFromFirestore) unsubscribeFromFirestore();
+                userId = null;
+                dbCollectionPath = '';
+                userSettingsDocRef = null;
+                transactions = [];
+                initialBalance = 0;
+                render();
+                authView.classList.remove('hidden');
+                appView.classList.add('hidden');
             }
         });
-        const handleRegister=(e)=>{e.preventDefault();const t=registerForm.email.value,a=registerForm.password.value;authError.textContent="",createUserWithEmailAndPassword(auth,t,a).then(e=>{registerForm.reset()}).catch(e=>{authError.textContent=getFriendlyAuthError(e.code)})};const handleLogin=(e)=>{e.preventDefault();const t=loginForm.email.value,a=loginForm.password.value;authError.textContent="",signInWithEmailAndPassword(auth,t,a).then(e=>{loginForm.reset()}).catch(e=>{authError.textContent=getFriendlyAuthError(e.code)})};const handleLogout=()=>{signOut(auth).catch(e=>console.error("Logout error:",e))};function getFriendlyAuthError(e){switch(e){case"auth/invalid-email":return"Format email tidak valid.";case"auth/user-not-found":case"auth/wrong-password":case"auth/invalid-credential":return"Email atau password salah.";case"auth/email-already-in-use":return"Email ini sudah terdaftar. Silakan login.";case"auth/weak-password":return"Password terlalu lemah (min. 6 karakter).";default:return"Terjadi kesalahan. Coba lagi."}}
-
-        // --- DATA HANDLING ---
-        async function loadInitialData() {
-            await loadCategoryMaster();
-            const settingsDocRef = doc(db, dbSettingsPath, 'main');
-            const settingsSnap = await getDoc(settingsDocRef);
-            if (settingsSnap.exists()) initialBalance = settingsSnap.data().initialBalance || 0;
-            initialBalanceInput.value = initialBalance;
-            listenToTransactions();
-        }
-        async function loadCategoryMaster() {
-            try {
-                const docRef = doc(db, dbCategoryMasterPath, 'main_list');
-                const docSnap = await getDoc(docRef);
-                categoryMasterData = docSnap.exists() ? docSnap.data().categories || [] : [];
-                populateCategoryDropdowns();
-            } catch (error) { console.error("Error loading categories:", error); alert("Gagal memuat daftar kategori."); }
-        }
-        function populateCategoryDropdowns() {
-            const categorySelectors = [document.getElementById('category'), document.getElementById('edit-category')];
-            categorySelectors.forEach(selector => {
-                selector.innerHTML = '';
-                categoryMasterData.sort().forEach(cat => {
-                    const option = document.createElement('option');
-                    option.value = cat;
-                    option.textContent = cat;
-                    selector.appendChild(option);
-                });
-            });
-        }
-        function listenToTransactions() {
-            if (unsubscribe) unsubscribe();
-            const q = query(collection(db, dbTransactionPath));
-            unsubscribe = onSnapshot(q, (snapshot) => {
-                transactions = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                render();
-            });
-        }
-        async function saveInitialBalance() {
-            const newBalance = parseFloat(initialBalanceInput.value) || 0;
-            saveStatusEl.textContent = 'Menyimpan...';
-            try {
-                await setDoc(doc(db, dbSettingsPath, 'main'), { initialBalance: newBalance });
-                initialBalance = newBalance;
-                updateSummary();
-                saveStatusEl.textContent = 'Tersimpan!';
-                setTimeout(() => { saveStatusEl.textContent = ''; }, 2000);
-            } catch (error) { saveStatusEl.textContent = 'Gagal menyimpan.'; }
-        }
-        async function handleFormSubmit(e) { e.preventDefault(); const form = e.target; const newTransaction = { date: form.date.value, description: form.description.value.trim(), type: form.type.value, category: form.type.value === 'expense' ? form.category.value : null, amount: parseFloat(form.amount.value), createdAt: new Date().toISOString() }; try { await addDoc(collection(db, dbTransactionPath), newTransaction); form.reset(); form.date.valueAsDate = new Date(); } catch (error) { alert("Gagal menyimpan transaksi."); } }
         
-        // --- UI & DISPLAY ---
-        function formatCurrency(amount){return new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",minimumFractionDigits:0}).format(amount)}
-        function render(){
-            const searchTerm=searchInput.value.toLowerCase();
-            const filteredTransactions=transactions.filter(t=>t.description.toLowerCase().includes(searchTerm));
-            transactionTableBody.innerHTML="";
-            if(filteredTransactions.length===0){
-                transactionTableBody.innerHTML='<tr><td colspan="6" class="text-center py-6">Belum ada transaksi.</td></tr>';
+        const handleRegister = (e) => { e.preventDefault(); const email = registerForm.email.value; const password = registerForm.password.value; authError.textContent = ''; createUserWithEmailAndPassword(auth, email, password).then(cred => { registerForm.reset(); }).catch(err => { authError.textContent = getFriendlyAuthError(err.code); }); };
+        const handleLogin = (e) => { e.preventDefault(); const email = loginForm.email.value; const password = loginForm.password.value; authError.textContent = ''; signInWithEmailAndPassword(auth, email, password).then(cred => { loginForm.reset(); }).catch(err => { authError.textContent = getFriendlyAuthError(err.code); }); };
+        const handleLogout = () => { signOut(auth).catch(err => console.error("Logout error:", err)); };
+        function getFriendlyAuthError(c){switch(c){case'auth/invalid-email':return'Format email tidak valid.';case'auth/user-not-found':case'auth/wrong-password':case'auth/invalid-credential':return'Email atau password salah.';case'auth/email-already-in-use':return'Email ini sudah terdaftar. Silakan login.';case'auth/weak-password':return'Password terlalu lemah (min. 6 karakter).';default:return'Terjadi kesalahan. Coba lagi.';}}
+
+        // --- USER SETTINGS ---
+        async function loadUserSettings() { if (!userSettingsDocRef) return; try { const docSnap = await getDoc(userSettingsDocRef); initialBalance = docSnap.exists() ? (docSnap.data().initialBalance || 0) : 0; initialBalanceInput.value = initialBalance; updateSummary(); } catch (error) { console.error("Error loading settings:", error); initialBalance = 0; updateSummary(); } }
+        async function saveInitialBalance() { if (!userSettingsDocRef) return; const newBalance = parseFloat(initialBalanceInput.value) || 0; saveStatusEl.textContent = 'Menyimpan...'; try { await setDoc(userSettingsDocRef, { initialBalance: newBalance }); initialBalance = newBalance; updateSummary(); saveStatusEl.textContent = 'Tersimpan!'; setTimeout(() => { saveStatusEl.textContent = ''; }, 2000); } catch (error) { saveStatusEl.textContent = 'Gagal menyimpan.'; } }
+        
+        // --- FIRESTORE ---
+        function listenToTransactions() { if (unsubscribeFromFirestore) unsubscribeFromFirestore(); const collectionRef = collection(db, dbCollectionPath); unsubscribeFromFirestore = onSnapshot(collectionRef, (querySnapshot) => { transactions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); render(); }, (error) => console.error("Error fetching data:", error)); }
+        
+        // --- RENDER & DISPLAY ---
+        function formatCurrency(amount) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount); }
+        function render() {
+            const searchTerm = searchInput.value.toLowerCase();
+            const filteredTransactions = transactions.filter(t => t.description.toLowerCase().includes(searchTerm));
+            transactionTableBody.innerHTML = '';
+            if (filteredTransactions.length === 0) {
+                transactionTableBody.innerHTML = '<tr><td colspan="6" class="text-center py-6">Belum ada transaksi.</td></tr>';
             } else {
-                filteredTransactions.sort((a,b)=>new Date(b.date)-new Date(a.date));
-                filteredTransactions.forEach(transaction=>{
-                    const row=document.createElement("tr");
-                    row.className="bg-white border-b hover:bg-gray-50";
-                    row.innerHTML=`<td class="py-4 px-6">${new Date(transaction.date).toLocaleDateString("id-ID")}</td><td class="py-4 px-6 font-medium text-gray-900">${transaction.description}</td><td class="py-4 px-6">${transaction.category||"-"}</td><td class="py-4 px-6 text-right font-medium ${transaction.type==="income"?"text-green-600":"text-red-600"}">${formatCurrency(transaction.amount)}</td><td class="py-4 px-6 text-center"><button data-id="${transaction.id}" class="edit-btn text-blue-600 p-1">✏️</button><button data-id="${transaction.id}" class="delete-btn text-red-600 p-1">🗑️</button></td>`;
+                filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(t => {
+                    const row = document.createElement('tr');
+                    row.className = 'bg-white border-b hover:bg-gray-50';
+                    row.innerHTML = `<td class="py-4 px-6">${new Date(t.date).toLocaleDateString('id-ID')}</td><td class="py-4 px-6 font-medium text-gray-900">${t.description}</td><td class="py-4 px-6">${t.category || '-'}</td><td class="py-4 px-6 text-right font-medium ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}">${formatCurrency(t.amount)}</td><td class="py-4 px-6 text-center"><button data-id="${t.id}" class="edit-btn text-blue-600 hover:text-blue-800 p-1">✏️</button><button data-id="${t.id}" class="delete-btn text-red-600 hover:text-red-800 p-1">🗑️</button></td>`;
                     transactionTableBody.appendChild(row);
                 });
             }
             updateSummary();
             renderChart();
         }
-        function updateSummary(){
-            const totalIncome=transactions.filter(t=>t.type==="income").reduce((sum,t)=>sum+t.amount,0);
-            const totalExpense=transactions.filter(t=>t.type==="expense").reduce((sum,t)=>sum+t.amount,0);
-            initialBalanceEl.textContent=formatCurrency(initialBalance);
-            totalIncomeEl.textContent=formatCurrency(totalIncome);
-            totalExpenseEl.textContent=formatCurrency(totalExpense);
-            finalBalanceEl.textContent=formatCurrency(initialBalance+totalIncome-totalExpense);
+        function updateSummary() {
+            const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+            const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+            initialBalanceEl.textContent = formatCurrency(initialBalance);
+            totalIncomeEl.textContent = formatCurrency(totalIncome);
+            totalExpenseEl.textContent = formatCurrency(totalExpense);
+            finalBalanceEl.textContent = formatCurrency(initialBalance + totalIncome - totalExpense);
         }
-        function renderChart(){
-            if(!document.getElementById("expense-chart"))return;
-            const ctx=document.getElementById("expense-chart").getContext("2d");
-            const expenseData=transactions.filter(t=>t.type==="expense").reduce((acc,t)=>{acc[t.category]=(acc[t.category]||0)+t.amount;return acc},{});
-            const labels=Object.keys(expenseData);
-            const data=Object.values(expenseData);
-            const backgroundColors=["#3B82F6","#EF4444","#10B981","#F59E0B","#8B5CF6","#EC4899"];
-            if(expenseChart)expenseChart.destroy();
-            if(labels.length!==0){
-                expenseChart=new Chart(ctx,{
-                    type:"doughnut",
-                    data:{
-                        labels:labels,
-                        datasets:[{label:"Pengeluaran",data:data,backgroundColor:backgroundColors.slice(0,labels.length),borderColor:"#FFFFFF",borderWidth:2}]
-                    },
-                    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom"},tooltip:{callbacks:{label:context=>`${context.label||""}: ${formatCurrency(context.parsed)}`}}}}
-                });
-            }
+        function renderChart() {
+             if (!document.getElementById('expense-chart')) return; const ctx = document.getElementById('expense-chart').getContext('2d'); const expenseData = transactions.filter(t => t.type === 'expense').reduce((acc, t) => { acc[t.category] = (acc[t.category] || 0) + t.amount; return acc; }, {}); const labels = Object.keys(expenseData); const data = Object.values(expenseData); const backgroundColors = ['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899']; if (expenseChart) expenseChart.destroy(); if (labels.length === 0) return; expenseChart = new Chart(ctx, { type: 'doughnut', data: { labels: labels, datasets: [{ label: 'Pengeluaran', data: data, backgroundColor: backgroundColors.slice(0, labels.length), borderColor: '#FFFFFF', borderWidth: 2, }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: context => `${context.label || ''}: ${formatCurrency(context.parsed)}` } } } } });
         }
 
-        // --- MODALS (EDIT, DELETE, IMPORT) ---
-        function openEditModal(transactionId) { const transaction = transactions.find(t => t.id === transactionId); if (!transaction) return; currentTransactionId = transactionId; const form = document.getElementById('edit-form'); form.date.value = transaction.date; form.description.value = transaction.description; form.type.value = transaction.type; form.amount.value = transaction.amount; if (transaction.type === 'expense') { form.category.value = transaction.category; } toggleCategoryAndReceipt(form.type, form.querySelector('#edit-category-wrapper')); editModal.classList.remove('hidden'); }
-        function closeEditModal() { editModal.classList.add('hidden'); currentTransactionId = null; }
-        async function handleEditFormSubmit(e) { e.preventDefault(); if (!currentTransactionId) return; const form = e.target; const updatedData = { date: form.date.value, description: form.description.value.trim(), type: form.type.value, category: form.type.value === 'expense' ? form.category.value : null, amount: parseFloat(form.amount.value) }; try { await updateDoc(doc(db, dbTransactionPath, currentTransactionId), updatedData); closeEditModal(); } catch (error) { alert("Gagal memperbarui transaksi."); } }
+        // --- CRUD OPERATIONS ---
+        async function handleFormSubmit(e) { e.preventDefault(); const newTransaction = { date: dateInput.value, description: descriptionInput.value.trim(), type: typeInput.value, category: typeInput.value === 'expense' ? categoryInput.value : null, amount: parseFloat(amountInput.value), createdBy: userId, createdAt: new Date().toISOString() }; try { await addDoc(collection(db, dbCollectionPath), newTransaction); transactionForm.reset(); dateInput.valueAsDate = new Date(); } catch (error) { alert("Gagal menyimpan transaksi."); } }
+        async function handleEditFormSubmit(e) { e.preventDefault(); if (!currentTransactionId) return; const updatedData = { date: editDate.value, description: editDescription.value.trim(), type: editType.value, category: editType.value === 'expense' ? editCategory.value : null, amount: parseFloat(editAmount.value), }; try { await updateDoc(doc(db, dbCollectionPath, currentTransactionId), updatedData); closeEditModal(); } catch (error) { alert("Gagal memperbarui transaksi."); } }
+        async function handleDeleteConfirmed() { if (!currentTransactionId) return; try { await deleteDoc(doc(db, dbCollectionPath, currentTransactionId)); closeDeleteModal(); } catch (error) { alert("Gagal menghapus transaksi."); } }
+        function openEditModal(transaction) { currentTransactionId = transaction.id; editDate.value = transaction.date; editDescription.value = transaction.description; editType.value = transaction.type; editAmount.value = transaction.amount; if (transaction.type === 'expense') { editCategory.value = transaction.category; } toggleCategoryAndReceipt(editType, editCategoryWrapper); editModal.classList.remove('hidden'); }
+        function closeEditModal() { currentTransactionId = null; editModal.classList.add('hidden'); editForm.reset(); }
         function openDeleteModal(transactionId) { currentTransactionId = transactionId; deleteModal.classList.remove('hidden'); }
-        function closeDeleteModal() { deleteModal.classList.add('hidden'); currentTransactionId = null; }
-        async function handleDeleteConfirmed() { if (!currentTransactionId) return; try { await deleteDoc(doc(db, dbTransactionPath, currentTransactionId)); closeDeleteModal(); } catch (error) { alert("Gagal menghapus transaksi."); } }
+        function closeDeleteModal() { currentTransactionId = null; deleteModal.classList.add('hidden'); }
         function toggleCategoryAndReceipt(typeEl, categoryEl) { if (categoryEl) categoryEl.style.display = typeEl.value === 'expense' ? 'block' : 'none'; }
-        async function handleImportData(e) {
-            e.preventDefault();
-            const text = importTextarea.value; if (!text.trim()) { alert("Kotak teks kosong."); return; }
-            importStatus.textContent = 'Mengimpor data...';
-            const newCategories = text.trim().split('\n').map(line => line.trim()).filter(line => line);
-            if (newCategories.length === 0) { alert("Tidak ada data kategori yang valid untuk diimpor."); importStatus.textContent = ''; return; }
-            try {
-                // Get existing categories first
-                const docRef = doc(db, dbCategoryMasterPath, 'main_list');
-                const docSnap = await getDoc(docRef);
-                const existingCategories = docSnap.exists() ? docSnap.data().categories || [] : [];
-                
-                // Merge and remove duplicates
-                const combined = [...existingCategories, ...newCategories];
-                const uniqueCategories = [...new Set(combined)];
+        
+        // --- PRINT & EXPORT ---
+        function generatePDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            const sorted = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+            let runningBalance = initialBalance;
 
-                await setDoc(docRef, { categories: uniqueCategories });
-                importStatus.textContent = 'Berhasil! Daftar kategori telah diperbarui.';
-                await loadCategoryMaster(); // Refresh dropdowns
-                setTimeout(() => { importModal.classList.add('hidden'); importForm.reset(); importStatus.textContent = ''; }, 2000);
-            } catch (error) { importStatus.textContent = 'Gagal mengimpor. Cek koneksi dan aturan Firebase.'; console.error("Import error:", error); }
+            const head = [['Tanggal', 'Kategori', 'Keterangan', 'Debit', 'Kredit', 'Saldo']];
+            const body = [];
+            
+            body.push([
+                { content: 'Saldo Awal', colSpan: 5, styles: { fontStyle: 'bold' } },
+                { content: formatCurrency(initialBalance), styles: { halign: 'right', fontStyle: 'bold' } }
+            ]);
+
+            sorted.forEach(t => {
+                const debit = t.type === 'income' ? t.amount : 0;
+                const kredit = t.type === 'expense' ? t.amount : 0;
+                runningBalance += (debit - kredit);
+                body.push([
+                    new Date(t.date).toLocaleDateString('id-ID'),
+                    t.category || '',
+                    t.description,
+                    { content: debit > 0 ? formatCurrency(debit) : '-', styles: { halign: 'right' } },
+                    { content: kredit > 0 ? formatCurrency(kredit) : '-', styles: { halign: 'right' } },
+                    { content: formatCurrency(runningBalance), styles: { halign: 'right' } }
+                ]);
+            });
+
+            body.push([
+                { content: 'Saldo Akhir', colSpan: 5, styles: { fontStyle: 'bold' } },
+                { content: formatCurrency(runningBalance), styles: { halign: 'right', fontStyle: 'bold' } }
+            ]);
+            
+            doc.setFontSize(18);
+            doc.text('Laporan Uang Kas Kantor', 14, 22);
+            doc.setFontSize(11);
+            doc.setTextColor(100);
+            doc.text('PT. Glori Mitra Sukses (GMS)', 14, 30);
+
+            doc.autoTable({
+                head: head,
+                body: body,
+                startY: 38,
+                theme: 'grid'
+            });
+
+            doc.save(`laporan-kas-${new Date().toISOString().slice(0,10)}.pdf`);
         }
 
-        // --- PDF & CSV EXPORT ---
-        function generatePDF() { const { jsPDF } = window.jspdf; const doc = new jsPDF(); const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date)); let runningBalance = initialBalance; const head = [["Tanggal", "Kategori", "Keterangan", "Debit", "Kredit", "Saldo"]]; const body = []; body.push([{ content: "Saldo Awal", colSpan: 5, styles: { fontStyle: "bold" } }, { content: formatCurrency(initialBalance), styles: { halign: "right", fontStyle: "bold" } }]); sortedTransactions.forEach(t => { const debit = t.type === "income" ? t.amount : 0; const kredit = t.type === "expense" ? t.amount : 0; runningBalance += debit - kredit; body.push([ new Date(t.date).toLocaleDateString("id-ID"), t.category || "", t.description, { content: debit > 0 ? formatCurrency(debit) : "-", styles: { halign: "right" } }, { content: kredit > 0 ? formatCurrency(kredit) : "-", styles: { halign: "right" } }, { content: formatCurrency(runningBalance), styles: { halign: "right" } } ]); }); body.push([{ content: "Saldo Akhir", colSpan: 5, styles: { fontStyle: "bold" } }, { content: formatCurrency(runningBalance), styles: { halign: "right", fontStyle: "bold" } }]); doc.setFontSize(18); doc.text("Laporan Uang Kas Kantor", 14, 22); doc.setFontSize(11); doc.setTextColor(100); doc.text("PT. Glori Mitra Sukses (GMS)", 14, 30); doc.autoTable({ head: head, body: body, startY: 38, theme: "grid" }); doc.save(`laporan-kas-${new Date().toISOString().slice(0, 10)}.pdf`); }
-        function exportToCSV() { const headers = ["Tanggal", "Kategori", "Keterangan", "Debit", "Kredit", "Saldo"]; const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date)); let runningBalance = initialBalance; const rows = []; rows.push(["Saldo Awal", "", "", "", "", initialBalance]); sortedTransactions.forEach(t => { const debit = t.type === "income" ? t.amount : ""; const kredit = t.type === "expense" ? t.amount : ""; runningBalance += (t.type === "income" ? t.amount : -t.amount); rows.push([ new Date(t.date).toLocaleDateString("id-ID"), `"${t.category ? t.category.replace(/"/g, '""') : ""}"`, `"${t.description.replace(/"/g, '""')}"`, debit, kredit, runningBalance ]); }); let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n${headers.join(",")}\n${rows.map(row => row.join(",")).join("\n")}\n\n,,,,"Saldo Akhir:",${runningBalance}`; const link = document.createElement("a"); link.setAttribute("href", encodeURI("data:text/csv;charset=utf-8," + ("\uFEFF" + csvContent))); link.setAttribute("download", `laporan_kas_gms_${new Date().toISOString().slice(0, 10)}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link); }
-
+        function exportToCSV() {
+            const headers = ['Tanggal', 'Kategori', 'Keterangan', 'Debit', 'Kredit', 'Saldo'];
+            const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+            let runningBalance = initialBalance;
+            let rows = [];
+            rows.push([ 'Saldo Awal', '', '', '', '', initialBalance ]);
+            sortedTransactions.forEach(t => {
+                const debit = t.type === 'income' ? t.amount : '';
+                const kredit = t.type === 'expense' ? t.amount : '';
+                runningBalance += (t.type === 'income' ? t.amount : -t.amount);
+                rows.push([ new Date(t.date).toLocaleDateString('id-ID'), `"${t.category ? t.category.replace(/"/g, '""') : ''}"`, `"${t.description.replace(/"/g, '""')}"`, debit, kredit, runningBalance ]);
+            });
+            let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n${headers.join(',')}\n${rows.map(e => e.join(',')).join('\n')}\n\n,,,,"Saldo Akhir:",${runningBalance}`;
+            const link = document.createElement("a");
+            link.setAttribute("href", encodeURI('data:text/csv;charset=utf-8,' + '\uFEFF' + csvContent));
+            link.setAttribute("download", `laporan_kas_gms_${new Date().toISOString().slice(0,10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
         // --- EVENT LISTENERS ---
         document.addEventListener('DOMContentLoaded', () => {
             loginForm.addEventListener('submit', handleLogin);
             registerForm.addEventListener('submit', handleRegister);
             logoutBtn.addEventListener('click', handleLogout);
-            showRegisterBtn.addEventListener('click', () => { loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); });
-            showLoginBtn.addEventListener('click', () => { registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
             saveInitialBalanceBtn.addEventListener('click', saveInitialBalance);
+            printBtn.addEventListener('click', generatePDF); // Changed to call generatePDF
+
+            showRegisterBtn.addEventListener('click', () => { loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); document.getElementById('show-register-btn-text').classList.add('hidden'); document.getElementById('show-login-btn-text').classList.remove('hidden'); authError.textContent = ''; });
+            showLoginBtn.addEventListener('click', () => { registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); document.getElementById('show-register-btn-text').classList.remove('hidden'); document.getElementById('show-login-btn-text').classList.add('hidden'); authError.textContent = ''; });
             transactionForm.addEventListener('submit', handleFormSubmit);
-            document.getElementById('edit-form').addEventListener('submit', handleEditFormSubmit);
-            document.getElementById('cancel-edit-btn').addEventListener('click', closeEditModal);
-            document.getElementById('confirm-delete-btn').addEventListener('click', handleDeleteConfirmed);
-            document.getElementById('cancel-delete-btn').addEventListener('click', closeDeleteModal);
-            printBtn.addEventListener('click', generatePDF);
+            editForm.addEventListener('submit', handleEditFormSubmit);
+            cancelEditBtn.addEventListener('click', closeEditModal);
+            confirmDeleteBtn.addEventListener('click', handleDeleteConfirmed);
+            cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+            document.getElementById('transaction-list-section').addEventListener('click', (e) => { if (e.target.classList.contains('edit-btn')) { const transaction = transactions.find(t => t.id === e.target.dataset.id); if (transaction) openEditModal(transaction); } if (e.target.classList.contains('delete-btn')) { openDeleteModal(e.target.dataset.id); } });
+            searchInput.addEventListener('input', render);
             exportCsvBtn.addEventListener('click', exportToCSV);
-            manageCategoriesBtn.addEventListener('click', () => importModal.classList.remove('hidden'));
-            cancelImportBtn.addEventListener('click', () => importModal.classList.add('hidden'));
-            importForm.addEventListener('submit', handleImportData);
-            transactionTableBody.addEventListener('click', (e) => {
-                if(e.target.closest('.edit-btn')) openEditModal(e.target.closest('.edit-btn').dataset.id);
-                if(e.target.closest('.delete-btn')) openDeleteModal(e.target.closest('.delete-btn').dataset.id);
-            });
+            typeInput.addEventListener('change', () => toggleCategoryAndReceipt(typeInput, categoryWrapper));
+            editType.addEventListener('change', () => toggleCategoryAndReceipt(editType, editCategoryWrapper));
+            dateInput.valueAsDate = new Date();
         });
     </script>
     <style>
@@ -257,7 +295,7 @@
     </style>
 </head>
 <body>
-    <!-- Auth View -->
+    <!-- Authentication View -->
     <div id="auth-view" class="flex items-center justify-center min-h-screen bg-gray-100">
         <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
             <div><h2 class="text-2xl font-bold text-center">Laporan Kas Kantor</h2><p class="text-center text-gray-600">PT. Glori Mitra Sukses (GMS)</p></div>
@@ -266,7 +304,7 @@
                 <form id="login-form"><h3 class="text-xl font-semibold mb-4 text-center">Login</h3><div class="space-y-4"><div><label for="login-email" class="sr-only">Email</label><input type="email" id="login-email" name="email" class="form-input" placeholder="Alamat email" required></div><div><label for="login-password" class="sr-only">Password</label><input type="password" id="login-password" name="password" class="form-input" placeholder="Password" required></div></div><button type="submit" class="w-full mt-6 btn btn-primary">Masuk</button></form>
                 <form id="register-form" class="hidden"><h3 class="text-xl font-semibold mb-4 text-center">Daftar Akun Baru</h3><div class="space-y-4"><div><label for="register-email" class="sr-only">Email</label><input type="email" id="register-email" name="email" class="form-input" placeholder="Alamat email" required></div><div><label for="register-password" class="sr-only">Password</label><input type="password" id="register-password" name="password" class="form-input" placeholder="Password (min. 6 karakter)" required></div></div><button type="submit" class="w-full mt-6 btn btn-primary">Daftar</button></form>
                 <p id="auth-error" class="text-sm text-center text-red-600 h-4"></p>
-                <div class="text-sm text-center text-gray-600"><p>Belum punya akun? <button type="button" id="show-register-btn" class="font-medium text-blue-600 hover:underline">Daftar</button></p><p class="hidden">Sudah punya akun? <button type="button" id="show-login-btn" class="font-medium text-blue-600 hover:underline">Login</button></p></div>
+                <div class="text-sm text-center text-gray-600"><p id="show-register-btn-text">Belum punya akun? <button type="button" id="show-register-btn" class="font-medium text-blue-600 hover:underline">Daftar di sini</button></p><p id="show-login-btn-text" class="hidden">Sudah punya akun? <button type="button" id="show-login-btn" class="font-medium text-blue-600 hover:underline">Login di sini</button></p></div>
             </div>
         </div>
     </div>
@@ -277,23 +315,16 @@
             <div><h1 class="text-3xl md:text-4xl font-bold text-gray-800">Laporan Uang Kas Kantor</h1><p class="text-lg text-gray-600">PT. Glori Mitra Sukses (GMS)</p></div>
             <div class="text-right"><p id="user-email-display" class="text-sm text-gray-700"></p><button id="logout-btn" class="btn btn-secondary mt-1">Logout</button></div>
         </header>
+
         <section class="card p-4 mb-8">
-             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                <div class="flex items-center gap-4">
-                    <div class="flex-grow">
-                        <label for="initial-balance-input" class="block text-sm font-medium text-gray-700 mb-1">Saldo Awal (Rp)</label>
-                        <input type="number" id="initial-balance-input" class="form-input" placeholder="0">
-                    </div>
-                    <div>
-                        <button id="save-initial-balance-btn" class="btn btn-primary btn-sm">Simpan</button>
-                    </div>
-                    <span id="save-status" class="text-sm text-green-600 pt-6"></span>
-                </div>
-                <div class="hidden">
-                     <button id="manage-categories-btn" class="btn btn-secondary w-full">Kelola Daftar Kategori</button>
-                </div>
+            <div class="flex flex-wrap items-center gap-4">
+                <label for="initial-balance-input" class="font-medium text-gray-700">Saldo Awal (Rp):</label>
+                <input type="number" id="initial-balance-input" class="form-input w-48" placeholder="0">
+                <button id="save-initial-balance-btn" class="btn btn-primary btn-sm">Simpan</button>
+                <span id="save-status" class="text-sm text-green-600"></span>
             </div>
         </section>
+
         <main>
             <section id="summary-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <div class="card p-6"><h3 class="text-md font-medium text-gray-500">Saldo Awal</h3><p id="initial-balance" class="text-3xl font-bold text-gray-800">Rp 0</p></div>
@@ -301,60 +332,68 @@
                 <div class="card p-6"><h3 class="text-md font-medium text-gray-500">Total Pengeluaran</h3><p id="total-expense" class="text-3xl font-bold text-red-600">Rp 0</p></div>
                 <div class="card p-6 bg-blue-500 text-white"><h3 class="text-md font-medium text-blue-100">Saldo Akhir</h3><p id="final-balance" class="text-3xl font-bold">Rp 0</p></div>
             </section>
+
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-                <section class="lg:col-span-1 card p-6">
+                <section id="transaction-form-section" class="lg:col-span-1 card p-6">
                     <h2 class="text-xl font-bold mb-4">Tambah Transaksi Baru</h2>
                     <form id="transaction-form" class="space-y-4">
-                        <div><label for="date" class="block text-sm font-medium text-gray-700">Tanggal</label><input type="date" id="date" name="date" class="form-input" required></div>
-                        <div><label for="description" class="block text-sm font-medium text-gray-700">Keterangan</label><input type="text" id="description" name="description" class="form-input" placeholder="Contoh: Pembelian ATK" required></div>
-                        <div><label for="type" class="block text-sm font-medium text-gray-700">Tipe</label><select id="type" name="type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
-                        <div id="category-wrapper"><label for="category" class="block text-sm font-medium text-gray-700">Kategori</label><select id="category" name="category" class="form-select"></select></div>
-                        <div><label for="amount" class="block text-sm font-medium text-gray-700">Jumlah (Rp)</label><input type="number" id="amount" name="amount" class="form-input" placeholder="50000" required min="0"></div>
+                        <div><label for="date" class="block text-sm font-medium text-gray-700">Tanggal</label><input type="date" id="date" class="form-input" required></div>
+                        <div><label for="description" class="block text-sm font-medium text-gray-700">Keterangan</label><input type="text" id="description" class="form-input" placeholder="Contoh: Pembelian ATK" required></div>
+                        <div><label for="type" class="block text-sm font-medium text-gray-700">Tipe</label><select id="type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
+                        <div id="category-wrapper">
+                            <label for="category" class="block text-sm font-medium text-gray-700">Kategori</label>
+                            <select id="category" class="form-select">
+                                <option>6100.81 - Biaya Asuransi</option>
+                                <option>6100.42 - Biaya Ateka</option>
+                                <option>6105.05 - Biaya BBm, Tol, Parkir</option>
+                                <option>5300.99 - Biaya bongkar container</option>
+                                <option>6105.99 - Biaya bongkar muat ekspedisi</option>
+                                <option>6105.03- Biaya Ekspedisi lainnya</option>
+                                <option>6102.09 - Biaya Iklan, banner, pameran, sponsor</option>
+                                <option>6200.01 - Biaya Listrik</option>
+                                <option>5400.10 - Biaya packaging logistik</option>
+                                <option>5400.20 - Biaya packing stiker, dus dll - product</option>
+                                <option>6100.91 - Biaya Pajak lainnya</option>
+                                <option>6200.02 - Biaya PAM dan maintenace, keamanan dll</option>
+                                <option>6102.05 - Biaya Pemasaran dll</option>
+                                <option>6201.20 - Biaya Pemeliharaan Gedung</option>
+                                <option>6201.30 - Biaya Pemeliharaan Kendaraan</option>
+                                <option>6100.43 - Biaya Peralatan kantor</option>
+                                <option>6100.45 - Biaya Perlengkapan kantor</option>
+                                <option>6102.08 - Biaya Perjalanan Dinas</option>
+                                <option>6100.44 - Biaya Pos dan Materai</option>
+                                <option>6102.01 - Biaya Promosi, brosur, dll</option>
+                                <option>6100.41 - Biaya RTK / Rumah tangga kantor</option>
+                                <option>6109.02 - Biaya STNK, KIR & Pajak Kendaraan</option>
+                                <option>6200.03 - Biaya Telp, internet dll</option>
+                                <option>6100.34 - Biaya uang makan / transport</option>
+                                <option>00000 - Lainya</option>
+                            </select>
+                        </div>
+                        <div><label for="amount" class="block text-sm font-medium text-gray-700">Jumlah (Rp)</label><input type="number" id="amount" class="form-input" placeholder="50000" required min="0"></div>
                         <button type="submit" class="btn btn-primary w-full">Tambah Transaksi</button>
                     </form>
                 </section>
-                <section class="lg:col-span-2 card p-6"><h2 class="text-xl font-bold mb-4">Visualisasi Pengeluaran</h2><div class="chart-container"><canvas id="expense-chart"></canvas></div></section>
+                <section id="visualization-section" class="lg:col-span-2 card p-6">
+                    <h2 class="text-xl font-bold mb-4">Visualisasi Pengeluaran</h2><div class="chart-container"><canvas id="expense-chart"></canvas></div>
+                </section>
             </div>
-            <section class="card p-6">
-                <div class="flex flex-wrap justify-between items-center gap-4 mb-4"><h2 class="text-xl font-bold">Daftar Transaksi</h2><div class="flex flex-wrap items-center gap-4"><input type="text" id="search-input" class="form-input max-w-xs" placeholder="Cari..."><button id="print-btn" class="btn btn-secondary">Cetak PDF</button><button id="export-csv-btn" class="btn btn-secondary">Export CSV</button></div></div>
-                <div class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-500"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" class="py-3 px-6">Tanggal</th><th scope="col" class="py-3 px-6">Keterangan</th><th scope="col" class="py-3 px-6">Kategori</th><th scope="col" class="py-3 px-6 text-right">Jumlah</th><th scope="col" class="py-3 px-6">Aksi</th></tr></thead><tbody id="transaction-table-body"></tbody></table></div>
+            
+            <section id="transaction-list-section" class="card p-6">
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-4"><h2 class="text-xl font-bold">Daftar Transaksi</h2><div class="flex flex-wrap items-center gap-4"><input type="text" id="search-input" class="form-input max-w-xs" placeholder="Cari keterangan..."><button id="print-btn" class="btn btn-secondary">Cetak PDF</button><button id="export-csv-btn" class="btn btn-secondary">Export CSV</button></div></div>
+                <div id="display-table-container" class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-500"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" class="py-3 px-6">Tanggal</th><th scope="col" class="py-3 px-6">Keterangan</th><th scope="col" class="py-3 px-6">Kategori</th><th scope="col" class="py-3 px-6 text-right">Jumlah</th><th scope="col" class="py-3 px-6 text-center">Aksi</th></tr></thead><tbody id="transaction-table-body"></tbody></table></div>
             </section>
         </main>
-        <footer class="text-center mt-8 text-xs text-gray-500"><p id="user-id-display">Mengautentikasi...</p></footer>
+        
+        <footer class="text-center mt-8 text-xs text-gray-500">
+            <p id="user-id-display">Mengautentikasi...</p>
+        </footer>
     </div>
+
     <!-- Modals -->
-    <div id="import-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">Impor Daftar Kategori dari Excel</h3>
-            <p class="text-sm text-gray-600 mb-2">Salin satu kolom dari file Excel Anda yang berisi daftar kategori, lalu tempel di bawah ini.</p>
-            <p class="text-xs text-gray-500 mb-4">Catatan: Proses ini akan **menambahkan** kategori baru dan tidak akan menghapus yang sudah ada.</p>
-            <form id="import-form">
-                <textarea id="import-textarea" rows="10" class="form-input w-full" placeholder="Tempel data dari Excel di sini..."></textarea>
-                <div class="flex justify-end items-center gap-4 mt-4">
-                    <span id="import-status" class="text-sm"></span>
-                    <button type="button" id="cancel-import-btn" class="btn btn-secondary">Batal</button>
-                    <button type="submit" class="btn btn-primary">Impor Data</button>
-                </div>
-            </form>
-        </div>
-    </div>
-    <div id="edit-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">Edit Transaksi</h3>
-            <form id="edit-form" class="space-y-4">
-                <div><label class="block text-sm">Tanggal</label><input type="date" name="date" class="form-input" required></div>
-                <div><label class="block text-sm">Keterangan</label><input type="text" name="description" class="form-input" required></div>
-                <div><label class="block text-sm">Tipe</label><select name="type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div>
-                <div id="edit-category-wrapper"><label class="block text-sm">Kategori</label><select id="edit-category" name="category" class="form-select"></select></div>
-                <div><label class="block text-sm">Jumlah (Rp)</label><input type="number" name="amount" class="form-input" required min="0"></div>
-                <div class="flex justify-end gap-3 pt-4"><button type="button" id="cancel-edit-btn" class="btn btn-secondary">Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div>
-            </form>
-        </div>
-    </div>
-    <div id="delete-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="relative bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
-            <h3 class="text-lg font-medium text-gray-900">Konfirmasi Hapus</h3><p class="mt-2 text-sm text-gray-600">Apakah Anda yakin ingin menghapus transaksi ini?</p><div class="flex justify-end gap-3 pt-4 mt-4"><button type="button" id="cancel-delete-btn" class="btn btn-secondary">Batal</button><button type="button" id="confirm-delete-btn" class="btn btn-danger">Ya, Hapus</button></div>
-        </div>
-    </div>
+    <div id="edit-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50"><div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white"><h3 class="text-lg font-medium text-gray-900 mb-4">Edit Transaksi</h3><form id="edit-form" class="space-y-4"><div><label for="edit-date" class="block text-sm">Tanggal</label><input type="date" id="edit-date" class="form-input" required></div><div><label for="edit-description" class="block text-sm">Keterangan</label><input type="text" id="edit-description" class="form-input" required></div><div><label for="edit-type" class="block text-sm">Tipe</label><select id="edit-type" class="form-select"><option value="expense">Pengeluaran</option><option value="income">Pemasukan</option></select></div><div id="edit-category-wrapper"><label for="edit-category" class="block text-sm">Kategori</label><select id="edit-category" class="form-select">
+        <option>6100.81 - Biaya Asuransi</option><option>6100.42 - Biaya Ateka</option><option>6105.05 - Biaya BBm, Tol, Parkir</option><option>5300.99 - Biaya bongkar container</option><option>6105.99 - Biaya bongkar muat ekspedisi</option><option>6105.03- Biaya Ekspedisi lainnya</option><option>6102.09 - Biaya Iklan, banner, pameran, sponsor</option><option>6200.01 - Biaya Listrik</option><option>5400.10 - Biaya packaging logistik</option><option>5400.20 - Biaya packing stiker, dus dll - product</option><option>6100.91 - Biaya Pajak lainnya</option><option>6200.02 - Biaya PAM dan maintenace, keamanan dll</option><option>6102.05 - Biaya Pemasaran dll</option><option>6201.20 - Biaya Pemeliharaan Gedung</option><option>6201.30 - Biaya Pemeliharaan Kendaraan</option><option>6100.43 - Biaya Peralatan kantor</option><option>6100.45 - Biaya Perlengkapan kantor</option><option>6102.08 - Biaya Perjalanan Dinas</option><option>6100.44 - Biaya Pos dan Materai</option><option>6102.01 - Biaya Promosi, brosur, dll</option><option>6100.41 - Biaya RTK / Rumah tangga kantor</option><option>6109.02 - Biaya STNK, KIR & Pajak Kendaraan</option><option>6200.03 - Biaya Telp, internet dll</option><option>6100.34 - Biaya uang makan / transport</option><option>00000 - Lainya</option>
+    </select></div><div><label for="edit-amount" class="block text-sm">Jumlah (Rp)</label><input type="number" id="edit-amount" class="form-input" required min="0"></div><div class="flex justify-end gap-3 pt-4"><button type="button" id="cancel-edit-btn" class="btn btn-secondary">Batal</button><button type="submit" class="btn btn-primary">Simpan</button></div></form></div></div>
+    <div id="delete-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50"><div class="relative top-20 mx-auto p-5 border w-full max-w-sm shadow-lg rounded-md bg-white"><h3 class="text-lg font-medium text-gray-900">Konfirmasi Hapus</h3><p class="mt-2 text-sm text-gray-600">Apakah Anda yakin ingin menghapus transaksi ini?</p><div class="flex justify-end gap-3 pt-4 mt-4"><button type="button" id="cancel-delete-btn" class="btn btn-secondary">Batal</button><button type="button" id="confirm-delete-btn" class="btn btn-danger">Ya, Hapus</button></div></div></div>
 </body>
 </html>
