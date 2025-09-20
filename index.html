@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laporan Kas Kantor - PT. GMS (Final)</title>
+    <title>Laporan Kas Kantor - PT. GMS (Generate PDF)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Tambahan library untuk membuat PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     <script type="module">
@@ -104,7 +107,6 @@
         const deleteModal = document.getElementById('delete-modal');
         const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
         const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
-        const printReportContainer = document.getElementById('print-report-container');
 
         // --- AUTHENTICATION LOGIC ---
         onAuthStateChanged(auth, user => {
@@ -114,10 +116,8 @@
                 userIdDisplay.textContent = `Status: Login Berhasil | ID Pengguna: ${user.uid}`;
                 dbCollectionPath = `/artifacts/${firebaseConfig.appId}/users/${userId}/transactions_gms_firestore`;
                 userSettingsDocRef = doc(db, `/artifacts/${firebaseConfig.appId}/users/${userId}/settings/main`);
-                
                 authView.classList.add('hidden');
                 appView.classList.remove('hidden');
-
                 loadUserSettings();
                 listenToTransactions();
             } else {
@@ -128,7 +128,6 @@
                 transactions = [];
                 initialBalance = 0;
                 render();
-                
                 authView.classList.remove('hidden');
                 appView.classList.add('hidden');
             }
@@ -140,43 +139,11 @@
         function getFriendlyAuthError(c){switch(c){case'auth/invalid-email':return'Format email tidak valid.';case'auth/user-not-found':case'auth/wrong-password':case'auth/invalid-credential':return'Email atau password salah.';case'auth/email-already-in-use':return'Email ini sudah terdaftar. Silakan login.';case'auth/weak-password':return'Password terlalu lemah (min. 6 karakter).';default:return'Terjadi kesalahan. Coba lagi.';}}
 
         // --- USER SETTINGS ---
-        async function loadUserSettings() {
-            if (!userSettingsDocRef) return;
-            try {
-                const docSnap = await getDoc(userSettingsDocRef);
-                initialBalance = docSnap.exists() ? (docSnap.data().initialBalance || 0) : 0;
-                initialBalanceInput.value = initialBalance;
-                updateSummary();
-            } catch (error) {
-                console.error("Error loading settings:", error);
-                initialBalance = 0;
-                updateSummary();
-            }
-        }
-        async function saveInitialBalance() {
-            if (!userSettingsDocRef) return;
-            const newBalance = parseFloat(initialBalanceInput.value) || 0;
-            saveStatusEl.textContent = 'Menyimpan...';
-            try {
-                await setDoc(userSettingsDocRef, { initialBalance: newBalance });
-                initialBalance = newBalance;
-                updateSummary();
-                saveStatusEl.textContent = 'Tersimpan!';
-                setTimeout(() => { saveStatusEl.textContent = ''; }, 2000);
-            } catch (error) {
-                saveStatusEl.textContent = 'Gagal menyimpan.';
-            }
-        }
+        async function loadUserSettings() { if (!userSettingsDocRef) return; try { const docSnap = await getDoc(userSettingsDocRef); initialBalance = docSnap.exists() ? (docSnap.data().initialBalance || 0) : 0; initialBalanceInput.value = initialBalance; updateSummary(); } catch (error) { console.error("Error loading settings:", error); initialBalance = 0; updateSummary(); } }
+        async function saveInitialBalance() { if (!userSettingsDocRef) return; const newBalance = parseFloat(initialBalanceInput.value) || 0; saveStatusEl.textContent = 'Menyimpan...'; try { await setDoc(userSettingsDocRef, { initialBalance: newBalance }); initialBalance = newBalance; updateSummary(); saveStatusEl.textContent = 'Tersimpan!'; setTimeout(() => { saveStatusEl.textContent = ''; }, 2000); } catch (error) { saveStatusEl.textContent = 'Gagal menyimpan.'; } }
         
         // --- FIRESTORE ---
-        function listenToTransactions() {
-            if (unsubscribeFromFirestore) unsubscribeFromFirestore();
-            const collectionRef = collection(db, dbCollectionPath);
-            unsubscribeFromFirestore = onSnapshot(collectionRef, (querySnapshot) => {
-                transactions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                render();
-            }, (error) => console.error("Error fetching data:", error));
-        }
+        function listenToTransactions() { if (unsubscribeFromFirestore) unsubscribeFromFirestore(); const collectionRef = collection(db, dbCollectionPath); unsubscribeFromFirestore = onSnapshot(collectionRef, (querySnapshot) => { transactions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); render(); }, (error) => console.error("Error fetching data:", error)); }
         
         // --- RENDER & DISPLAY ---
         function formatCurrency(amount) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount); }
@@ -190,7 +157,7 @@
                 filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(t => {
                     const row = document.createElement('tr');
                     row.className = 'bg-white border-b hover:bg-gray-50';
-                    row.innerHTML = `<td class="py-4 px-6">${new Date(t.date).toLocaleDateString('id-ID')}</td><td class="py-4 px-6 font-medium text-gray-900">${t.description}</td><td class="py-4 px-6">${t.category || '-'}</td><td class="py-4 px-6 text-right font-medium ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}">${formatCurrency(t.amount)}</td><td class="py-4 px-6 no-print text-center"><button data-id="${t.id}" class="edit-btn text-blue-600 hover:text-blue-800 p-1">✏️</button><button data-id="${t.id}" class="delete-btn text-red-600 hover:text-red-800 p-1">🗑️</button></td>`;
+                    row.innerHTML = `<td class="py-4 px-6">${new Date(t.date).toLocaleDateString('id-ID')}</td><td class="py-4 px-6 font-medium text-gray-900">${t.description}</td><td class="py-4 px-6">${t.category || '-'}</td><td class="py-4 px-6 text-right font-medium ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}">${formatCurrency(t.amount)}</td><td class="py-4 px-6 text-center"><button data-id="${t.id}" class="edit-btn text-blue-600 hover:text-blue-800 p-1">✏️</button><button data-id="${t.id}" class="delete-btn text-red-600 hover:text-red-800 p-1">🗑️</button></td>`;
                     transactionTableBody.appendChild(row);
                 });
             }
@@ -220,84 +187,69 @@
         function toggleCategoryAndReceipt(typeEl, categoryEl) { if (categoryEl) categoryEl.style.display = typeEl.value === 'expense' ? 'block' : 'none'; }
         
         // --- PRINT & EXPORT ---
-        function generatePrintReport() {
-            printReportContainer.innerHTML = ''; // Clear previous report
+        function generatePDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
             const sorted = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
             let runningBalance = initialBalance;
 
-            let tableHTML = `<div class="print-header"><h1>Laporan Uang Kas Kantor</h1><p>PT. Glori Mitra Sukses (GMS)</p></div><table class="print-table">
-                <thead>
-                    <tr>
-                        <th>Tanggal</th>
-                        <th>Kategori</th>
-                        <th>Keterangan</th>
-                        <th>Debit</th>
-                        <th>Kredit</th>
-                        <th>Saldo</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td colspan="5" class="font-bold">Saldo Awal</td>
-                        <td class="font-bold">${formatCurrency(initialBalance)}</td>
-                    </tr>
-            `;
+            const head = [['Tanggal', 'Kategori', 'Keterangan', 'Debit', 'Kredit', 'Saldo']];
+            const body = [];
+            
+            body.push([
+                { content: 'Saldo Awal', colSpan: 5, styles: { fontStyle: 'bold' } },
+                { content: formatCurrency(initialBalance), styles: { halign: 'right', fontStyle: 'bold' } }
+            ]);
 
             sorted.forEach(t => {
                 const debit = t.type === 'income' ? t.amount : 0;
                 const kredit = t.type === 'expense' ? t.amount : 0;
                 runningBalance += (debit - kredit);
-                tableHTML += `
-                    <tr>
-                        <td>${new Date(t.date).toLocaleDateString('id-ID')}</td>
-                        <td>${t.category || ''}</td>
-                        <td>${t.description}</td>
-                        <td>${debit > 0 ? formatCurrency(debit) : '-'}</td>
-                        <td>${kredit > 0 ? formatCurrency(kredit) : '-'}</td>
-                        <td>${formatCurrency(runningBalance)}</td>
-                    </tr>
-                `;
+                body.push([
+                    new Date(t.date).toLocaleDateString('id-ID'),
+                    t.category || '',
+                    t.description,
+                    { content: debit > 0 ? formatCurrency(debit) : '-', styles: { halign: 'right' } },
+                    { content: kredit > 0 ? formatCurrency(kredit) : '-', styles: { halign: 'right' } },
+                    { content: formatCurrency(runningBalance), styles: { halign: 'right' } }
+                ]);
             });
 
-            tableHTML += `
-                    <tr>
-                        <td colspan="5" class="font-bold">Saldo Akhir</td>
-                        <td class="font-bold">${formatCurrency(runningBalance)}</td>
-                    </tr>
-                </tbody>
-            </table>`;
+            body.push([
+                { content: 'Saldo Akhir', colSpan: 5, styles: { fontStyle: 'bold' } },
+                { content: formatCurrency(runningBalance), styles: { halign: 'right', fontStyle: 'bold' } }
+            ]);
             
-            printReportContainer.innerHTML = tableHTML;
+            doc.setFontSize(18);
+            doc.text('Laporan Uang Kas Kantor', 14, 22);
+            doc.setFontSize(11);
+            doc.setTextColor(100);
+            doc.text('PT. Glori Mitra Sukses (GMS)', 14, 30);
+
+            doc.autoTable({
+                head: head,
+                body: body,
+                startY: 38,
+                theme: 'grid'
+            });
+
+            doc.save(`laporan-kas-${new Date().toISOString().slice(0,10)}.pdf`);
         }
 
         function exportToCSV() {
             const headers = ['Tanggal', 'Kategori', 'Keterangan', 'Debit', 'Kredit', 'Saldo'];
             const sortedTransactions = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
-            
             let runningBalance = initialBalance;
             let rows = [];
-            
             rows.push([ 'Saldo Awal', '', '', '', '', initialBalance ]);
-
             sortedTransactions.forEach(t => {
                 const debit = t.type === 'income' ? t.amount : '';
                 const kredit = t.type === 'expense' ? t.amount : '';
                 runningBalance += (t.type === 'income' ? t.amount : -t.amount);
-                rows.push([
-                    new Date(t.date).toLocaleDateString('id-ID'),
-                    `"${t.category ? t.category.replace(/"/g, '""') : ''}"`,
-                    `"${t.description.replace(/"/g, '""')}"`,
-                    debit,
-                    kredit,
-                    runningBalance
-                ]);
+                rows.push([ new Date(t.date).toLocaleDateString('id-ID'), `"${t.category ? t.category.replace(/"/g, '""') : ''}"`, `"${t.description.replace(/"/g, '""')}"`, debit, kredit, runningBalance ]);
             });
-
-            let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n`;
-            csvContent += headers.join(',') + '\n';
-            csvContent += rows.map(e => e.join(',')).join('\n');
-            csvContent += `\n\n,,,,"Saldo Akhir:",${runningBalance}`;
-
+            let csvContent = `Laporan Uang Kas Kantor\nPT. Glori Mitra Sukses (GMS)\n\n${headers.join(',')}\n${rows.map(e => e.join(',')).join('\n')}\n\n,,,,"Saldo Akhir:",${runningBalance}`;
             const link = document.createElement("a");
             link.setAttribute("href", encodeURI('data:text/csv;charset=utf-8,' + '\uFEFF' + csvContent));
             link.setAttribute("download", `laporan_kas_gms_${new Date().toISOString().slice(0,10)}.csv`);
@@ -312,10 +264,7 @@
             registerForm.addEventListener('submit', handleRegister);
             logoutBtn.addEventListener('click', handleLogout);
             saveInitialBalanceBtn.addEventListener('click', saveInitialBalance);
-            printBtn.addEventListener('click', () => {
-                generatePrintReport();
-                setTimeout(() => window.print(), 100);
-            });
+            printBtn.addEventListener('click', generatePDF); // Changed to call generatePDF
 
             showRegisterBtn.addEventListener('click', () => { loginForm.classList.add('hidden'); registerForm.classList.remove('hidden'); document.getElementById('show-register-btn-text').classList.add('hidden'); document.getElementById('show-login-btn-text').classList.remove('hidden'); authError.textContent = ''; });
             showLoginBtn.addEventListener('click', () => { registerForm.classList.add('hidden'); loginForm.classList.remove('hidden'); document.getElementById('show-register-btn-text').classList.remove('hidden'); document.getElementById('show-login-btn-text').classList.add('hidden'); authError.textContent = ''; });
@@ -343,23 +292,6 @@
         .form-input, .form-select { border-radius: 0.5rem; border: 1px solid #D1D5DB; padding: 0.5rem 0.75rem; width: 100%; }
         .form-input:focus, .form-select:focus { outline: none; border-color: #3B82F6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4); }
         .chart-container { position: relative; width: 100%; max-width: 400px; margin: auto; height: 300px; max-height: 400px; }
-        
-        @media print { 
-            @page { size: A4; margin: 20mm; } 
-            body { background-color: #fff; font-size: 10pt; } 
-            body * { visibility: hidden; } 
-            .no-print, .no-print * { display: none !important; } 
-            #print-section, #print-section * { visibility: visible; } 
-            #print-section { position: absolute; left: 0; top: 0; width: 100%; }
-            #display-table-container { display: none; }
-            .print-header { display: block; visibility: visible; text-align: center; margin-bottom: 20px; } 
-            .print-header h1 { font-size: 16pt; font-weight: bold; } 
-            .print-header p { font-size: 11pt; } 
-            .print-table { width: 100%; border-collapse: collapse; visibility: visible; } 
-            .print-table th, .print-table td { border: 1px solid #ccc; padding: 6px; text-align: left; } 
-            .print-table thead { background-color: #f2f2f2; }
-            .print-table td:nth-child(4), .print-table td:nth-child(5), .print-table td:nth-child(6) { text-align: right; }
-        }
     </style>
 </head>
 <body>
@@ -379,12 +311,12 @@
 
     <!-- Main App View -->
     <div id="app-view" class="hidden max-w-7xl mx-auto p-4 md:p-8">
-        <header class="flex flex-wrap justify-between items-start text-center mb-4 no-print">
+        <header class="flex flex-wrap justify-between items-start text-center mb-4">
             <div><h1 class="text-3xl md:text-4xl font-bold text-gray-800">Laporan Uang Kas Kantor</h1><p class="text-lg text-gray-600">PT. Glori Mitra Sukses (GMS)</p></div>
             <div class="text-right"><p id="user-email-display" class="text-sm text-gray-700"></p><button id="logout-btn" class="btn btn-secondary mt-1">Logout</button></div>
         </header>
 
-        <section class="card p-4 mb-8 no-print">
+        <section class="card p-4 mb-8">
             <div class="flex flex-wrap items-center gap-4">
                 <label for="initial-balance-input" class="font-medium text-gray-700">Saldo Awal (Rp):</label>
                 <input type="number" id="initial-balance-input" class="form-input w-48" placeholder="0">
@@ -394,14 +326,14 @@
         </section>
 
         <main>
-            <section id="summary-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 no-print">
+            <section id="summary-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <div class="card p-6"><h3 class="text-md font-medium text-gray-500">Saldo Awal</h3><p id="initial-balance" class="text-3xl font-bold text-gray-800">Rp 0</p></div>
                 <div class="card p-6"><h3 class="text-md font-medium text-gray-500">Total Pemasukan</h3><p id="total-income" class="text-3xl font-bold text-green-600">Rp 0</p></div>
                 <div class="card p-6"><h3 class="text-md font-medium text-gray-500">Total Pengeluaran</h3><p id="total-expense" class="text-3xl font-bold text-red-600">Rp 0</p></div>
                 <div class="card p-6 bg-blue-500 text-white"><h3 class="text-md font-medium text-blue-100">Saldo Akhir</h3><p id="final-balance" class="text-3xl font-bold">Rp 0</p></div>
             </section>
 
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8 no-print">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
                 <section id="transaction-form-section" class="lg:col-span-1 card p-6">
                     <h2 class="text-xl font-bold mb-4">Tambah Transaksi Baru</h2>
                     <form id="transaction-form" class="space-y-4">
@@ -442,21 +374,18 @@
                         <button type="submit" class="btn btn-primary w-full">Tambah Transaksi</button>
                     </form>
                 </section>
-                <section id="visualization-section" class="lg:col-span-2 card p-6 no-print">
+                <section id="visualization-section" class="lg:col-span-2 card p-6">
                     <h2 class="text-xl font-bold mb-4">Visualisasi Pengeluaran</h2><div class="chart-container"><canvas id="expense-chart"></canvas></div>
                 </section>
             </div>
             
             <section id="transaction-list-section" class="card p-6">
-                <div class="flex flex-wrap justify-between items-center gap-4 mb-4 no-print"><h2 class="text-xl font-bold">Daftar Transaksi</h2><div class="flex flex-wrap items-center gap-4"><input type="text" id="search-input" class="form-input max-w-xs" placeholder="Cari keterangan..."><button id="print-btn" class="btn btn-secondary">Cetak</button><button id="export-csv-btn" class="btn btn-secondary">Export CSV</button></div></div>
-                <div id="print-section">
-                    <div id="display-table-container" class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-500"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" class="py-3 px-6">Tanggal</th><th scope="col" class="py-3 px-6">Keterangan</th><th scope="col" class="py-3 px-6">Kategori</th><th scope="col" class="py-3 px-6 text-right">Jumlah</th><th scope="col" class="py-3 px-6 no-print text-center">Aksi</th></tr></thead><tbody id="transaction-table-body"></tbody></table></div>
-                    <div id="print-report-container" class="hidden"></div>
-                </div>
+                <div class="flex flex-wrap justify-between items-center gap-4 mb-4"><h2 class="text-xl font-bold">Daftar Transaksi</h2><div class="flex flex-wrap items-center gap-4"><input type="text" id="search-input" class="form-input max-w-xs" placeholder="Cari keterangan..."><button id="print-btn" class="btn btn-secondary">Cetak PDF</button><button id="export-csv-btn" class="btn btn-secondary">Export CSV</button></div></div>
+                <div id="display-table-container" class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-500"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th scope="col" class="py-3 px-6">Tanggal</th><th scope="col" class="py-3 px-6">Keterangan</th><th scope="col" class="py-3 px-6">Kategori</th><th scope="col" class="py-3 px-6 text-right">Jumlah</th><th scope="col" class="py-3 px-6 text-center">Aksi</th></tr></thead><tbody id="transaction-table-body"></tbody></table></div>
             </section>
         </main>
         
-        <footer class="text-center mt-8 text-xs text-gray-500 no-print">
+        <footer class="text-center mt-8 text-xs text-gray-500">
             <p id="user-id-display">Mengautentikasi...</p>
         </footer>
     </div>
@@ -468,4 +397,3 @@
     <div id="delete-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 z-50"><div class="relative top-20 mx-auto p-5 border w-full max-w-sm shadow-lg rounded-md bg-white"><h3 class="text-lg font-medium text-gray-900">Konfirmasi Hapus</h3><p class="mt-2 text-sm text-gray-600">Apakah Anda yakin ingin menghapus transaksi ini?</p><div class="flex justify-end gap-3 pt-4 mt-4"><button type="button" id="cancel-delete-btn" class="btn btn-secondary">Batal</button><button type="button" id="confirm-delete-btn" class="btn btn-danger">Ya, Hapus</button></div></div></div>
 </body>
 </html>
-
